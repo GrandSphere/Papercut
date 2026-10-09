@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Papercut.Dialog" parent="Theme.AppCompat.Dialog.Alert">
+        <item name="android:background">@color/oled_black</item>
+        <item name="android:textColor">@color/oled_fg</item>
+        <item name="android:textColorPrimary">@color/oled_fg</item>
+        <item name="android:textColorSecondary">@color/oled_muted</item>
+        <item name="android:windowBackground">@color/oled_black</item>
+        <item name="android:colorBackground">@color/oled_black</item>
+        <item name="colorBackgroundFloating">@color/oled_black</item>
+        <item name="android:elevation">12dp</item>
+        <item name="android:outlineAmbientShadowColor">#08E8EAED</item>
+        <item name="android:outlineSpotShadowColor">#05E8EAED</item>
+        <item name="colorAccent">@color/oled_fg</item>
+    </style>
+</resources>

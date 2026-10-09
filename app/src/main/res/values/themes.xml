@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Papercut" parent="Theme.AppCompat.NoActionBar">
+        <item name="android:windowBackground">@color/oled_black</item>
+        <item name="android:colorBackground">@color/oled_black</item>
+        <item name="android:statusBarColor">@color/oled_black</item>
+        <item name="android:navigationBarColor">@color/oled_black</item>
+        <item name="android:windowDrawsSystemBarBackgrounds">true</item>
+        <item name="android:windowFullscreen">false</item>
+        <item name="android:windowContentOverlay">@null</item>
+        <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
+        <item name="android:forceDarkAllowed">false</item>
+        <item name="colorPrimary">@color/oled_fg</item>
+        <item name="colorPrimaryDark">@color/oled_black</item>
+        <item name="colorAccent">@color/oled_fg</item>
+        <item name="android:textColor">@color/oled_fg</item>
+        <item name="android:textColorPrimary">@color/oled_fg</item>
+        <item name="android:textColorSecondary">@color/oled_muted</item>
+        <item name="alertDialogTheme">@style/Theme.Papercut.Dialog</item>
+    </style>
+
+    <style name="Theme.Papercut.Viewer" parent="Theme.Papercut">
+        <item name="android:windowFullscreen">true</item>
+        <item name="android:windowBackground">@color/oled_black</item>
+    </style>
+
+    <style name="Theme.Papercut.Open" parent="Theme.Papercut">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowDisablePreview">true</item>
+        <item name="android:windowFullscreen">true</item>
+    </style>
+
+    <style name="Theme.Papercut.Dialog" parent="Theme.AppCompat.Dialog.Alert">
+        <item name="android:background">@color/oled_black</item>
+        <item name="android:textColor">@color/oled_fg</item>
+        <item name="android:textColorPrimary">@color/oled_fg</item>
+        <item name="android:textColorSecondary">@color/oled_muted</item>
+        <item name="android:windowBackground">@color/oled_black</item>
+        <item name="android:colorBackground">@color/oled_black</item>
+        <item name="colorBackgroundFloating">@color/oled_black</item>
+        <item name="android:elevation">12dp</item>
+        <item name="colorAccent">@color/oled_fg</item>
+    </style>
+</resources>

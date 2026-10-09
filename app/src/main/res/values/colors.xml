@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="oled_black">#000000</color>
+    <color name="oled_fg">#E8EAED</color>
+    <color name="oled_muted">#9AA0A6</color>
+    <color name="highlight_default">#B39DDB</color>
+</resources>

@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Papercut</string>
+    <string name="open">Open</string>
+    <string name="settings">Settings</string>
+    <string name="go_to_page">Go to page</string>
+    <string name="fit_width">Fit width</string>
+    <string name="find">Find</string>
+    <string name="fit">Fit</string>
+    <string name="reset_zoom">Reset zoom</string>
+    <string name="saved">Saved</string>
+    <string name="page_padding">Vertical page padding</string>
+    <string name="table_of_contents">Table of Contents</string>
+    <string name="menu">Menu</string>
+    <string name="allow_follow_links">Allow following links</string>
+    <string name="double_tap_menu">Double tap to open menu</string>
+    <string name="app_font_colour">App font colour</string>
+    <string name="lock_zoom">Lock zoom</string>
+    <string name="lock_side_scroll">Lock side scrolling</string>
+    <string name="about">About</string>
+    <string name="quit">Quit</string>
+    <string name="copy">Copy</string>
+    <string name="share">Share</string>
+    <string name="copied">Copied</string>
+    <string name="open_failed">Could not open PDF</string>
+    <string name="password_protected">This PDF is password protected</string>
+    <string name="wrong_password">Wrong password</string>
+    <string name="no_document">Open a PDF first</string>
+    <string name="page_hint">Page number</string>
+    <string name="go">Go</string>
+    <string name="cancel">Cancel</string>
+</resources>
