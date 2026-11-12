@@ -48,7 +48,8 @@ object BackupJson {
                             .put("originalColors", item.originalColors)
                             .put("lastPageIndex", item.lastPageIndex)
                             .put("lastScrollXPdf", item.lastScrollXPdf.toDouble())
-                            .put("lastScrollYPdf", item.lastScrollYPdf.toDouble()),
+                            .put("lastScrollYPdf", item.lastScrollYPdf.toDouble())
+                            .put("pageRotations", item.pageRotations),
                     )
                 }
             })
@@ -122,6 +123,35 @@ object BackupJson {
             folioEnabled = obj.boolOr(current.folioEnabled, "folioEnabled"),
             folioStoreLastPosition = obj.boolOr(current.folioStoreLastPosition, "folioStoreLastPosition"),
             allowMultipleInstances = obj.boolOr(current.allowMultipleInstances, "allowMultipleInstances"),
+            penModeEnabled = obj.boolOr(current.penModeEnabled, "penModeEnabled"),
+            penIgnoresScrollLock = obj.boolOr(current.penIgnoresScrollLock, "penIgnoresScrollLock"),
+            penOpenMenuOnTap = obj.boolOr(current.penOpenMenuOnTap, "penOpenMenuOnTap"),
+            penButtonPress = obj.stringOr(current.penButtonPress, "penButtonPress"),
+            penButtonHold = obj.stringOr(current.penButtonHold, "penButtonHold"),
+            airActionButtonPress = obj.stringOr(current.airActionButtonPress, "airActionButtonPress"),
+            airActionButtonHold = obj.stringOr(current.airActionButtonHold, "airActionButtonHold"),
+            penDoubleTapEnabled = obj.boolOr(current.penDoubleTapEnabled, "penDoubleTapEnabled"),
+            penButtonDouble = obj.stringOr(current.penButtonDouble, "penButtonDouble"),
+            airActionButtonDouble = obj.stringOr(current.airActionButtonDouble, "airActionButtonDouble"),
+            penAllowTextSelection = obj.boolOr(current.penAllowTextSelection, "penAllowTextSelection"),
+            penFollowLinks = obj.boolOr(current.penFollowLinks, "penFollowLinks"),
+            penScreenTap = obj.stringOr(
+                legacyPenTap(obj, current),
+                "penScreenTap",
+            ),
+            penScreenDouble = obj.stringOr(current.penScreenDouble, "penScreenDouble"),
+            penScreenHold = obj.stringOr(
+                legacyPenHold(obj, current),
+                "penScreenHold",
+            ),
+            showJumpOnMenubar = obj.boolOr(current.showJumpOnMenubar, "showJumpOnMenubar"),
+            quickJumpEnabled = obj.boolOr(current.quickJumpEnabled, "quickJumpEnabled"),
+            penDoubleTapPeriodMs = ViewerSettings.clampPenTimingMs(
+                obj.intOr(current.penDoubleTapPeriodMs, "penDoubleTapPeriodMs"),
+            ),
+            penHoldPeriodMs = ViewerSettings.clampPenTimingMs(
+                obj.intOr(current.penHoldPeriodMs, "penHoldPeriodMs"),
+            ),
         ).withExclusiveMenuTaps().withExclusiveStartup()
     }
 
@@ -158,8 +188,27 @@ object BackupJson {
         .put("openFolioOnStartup", s.openFolioOnStartup)
         .put("folioOpenLastViewed", s.folioOpenLastViewed)
         .put("folioEnabled", s.folioEnabled)
-        .put("folioStoreLastPosition", s.folioStoreLastPosition)
-        .put("allowMultipleInstances", s.allowMultipleInstances)
+            .put("folioStoreLastPosition", s.folioStoreLastPosition)
+            .put("allowMultipleInstances", s.allowMultipleInstances)
+            .put("penModeEnabled", s.penModeEnabled)
+            .put("penIgnoresScrollLock", s.penIgnoresScrollLock)
+            .put("penOpenMenuOnTap", s.penOpenMenuOnTap)
+            .put("penButtonPress", s.penButtonPress)
+            .put("penButtonHold", s.penButtonHold)
+            .put("airActionButtonPress", s.airActionButtonPress)
+            .put("airActionButtonHold", s.airActionButtonHold)
+            .put("penDoubleTapEnabled", s.penDoubleTapEnabled)
+            .put("penButtonDouble", s.penButtonDouble)
+            .put("airActionButtonDouble", s.airActionButtonDouble)
+            .put("penAllowTextSelection", s.penAllowTextSelection)
+            .put("penFollowLinks", s.penFollowLinks)
+            .put("penScreenTap", s.penScreenTap)
+            .put("penScreenDouble", s.penScreenDouble)
+            .put("penScreenHold", s.penScreenHold)
+            .put("showJumpOnMenubar", s.showJumpOnMenubar)
+            .put("quickJumpEnabled", s.quickJumpEnabled)
+            .put("penDoubleTapPeriodMs", s.penDoubleTapPeriodMs)
+            .put("penHoldPeriodMs", s.penHoldPeriodMs)
 
     private fun documentObject(d: PdfDocument): JSONObject = JSONObject()
         .put("uri", d.uri)
@@ -210,6 +259,24 @@ object BackupJson {
                 val item = arr.optJSONObject(i) ?: continue
                 add(item)
             }
+        }
+    }
+
+    private fun legacyPenTap(obj: JSONObject, current: ViewerSettings): String {
+        val openMenu = obj.boolOr(current.penOpenMenuOnTap, "penOpenMenuOnTap")
+        val follow = obj.boolOr(current.penFollowLinks, "penFollowLinks")
+        return when {
+            follow && !openMenu -> PenButtonAction.FOLLOW_LINK.name
+            openMenu -> PenButtonAction.DEFAULT_INTERACTION.name
+            else -> PenButtonAction.DO_NOTHING.name
+        }
+    }
+
+    private fun legacyPenHold(obj: JSONObject, current: ViewerSettings): String {
+        return if (obj.boolOr(current.penAllowTextSelection, "penAllowTextSelection")) {
+            PenButtonAction.DEFAULT_INTERACTION.name
+        } else {
+            PenButtonAction.DO_NOTHING.name
         }
     }
 

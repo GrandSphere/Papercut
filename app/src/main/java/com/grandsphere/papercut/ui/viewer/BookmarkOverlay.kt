@@ -18,13 +18,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Add
-import androidx.compose.material.icons.outlined.CheckBox
-import androidx.compose.material.icons.outlined.CheckBoxOutlineBlank
-import androidx.compose.material.icons.outlined.Close
-import androidx.compose.material.icons.outlined.Edit
-import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
@@ -54,6 +47,7 @@ import com.grandsphere.papercut.pdf.PageInfo
 import com.grandsphere.papercut.ui.chrome.OverlaySelectActions
 import com.grandsphere.papercut.ui.chrome.PapercutAlertDialog
 import com.grandsphere.papercut.ui.chrome.PapercutOverlay
+import com.grandsphere.papercut.ui.chrome.SymbolIcon
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -171,8 +165,8 @@ fun BookmarkOverlay(
                     IconButton(
                         onClick = { managing = true },
                     ) {
-                        Icon(
-                            Icons.Outlined.Edit,
+                        SymbolIcon(
+                            "edit",
                             contentDescription = "Manage",
                             tint = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.75f),
                         )
@@ -193,8 +187,8 @@ fun BookmarkOverlay(
                             ),
                         contentAlignment = Alignment.Center,
                     ) {
-                        Icon(
-                            Icons.Outlined.Add,
+                        SymbolIcon(
+                            "add",
                             contentDescription = "Add bookmark",
                             tint = MaterialTheme.colorScheme.onBackground,
                         )
@@ -204,11 +198,12 @@ fun BookmarkOverlay(
         },
     ) {
         val on = MaterialTheme.colorScheme.onBackground
-        Box(Modifier.fillMaxSize()) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
                 state = listState,
                 userScrollEnabled = draggingId == null,
+                verticalArrangement = Arrangement.Bottom,
             ) {
                 itemsIndexed(local, key = { _, item -> item.id }) { index, item ->
                     val hidden = item.id == draggingId
@@ -412,8 +407,8 @@ private fun BookmarkRowContent(
         verticalAlignment = Alignment.Top,
     ) {
         if (selecting) {
-            Icon(
-                if (checked) Icons.Outlined.CheckBox else Icons.Outlined.CheckBoxOutlineBlank,
+            SymbolIcon(
+                if (checked) "check_box" else "check_box_outline_blank",
                 contentDescription = null,
                 tint = on,
                 modifier = Modifier
@@ -453,7 +448,7 @@ private fun BookmarkRowContent(
                     .size(40.dp)
                     .align(Alignment.CenterVertically),
             ) {
-                Icon(Icons.Outlined.Close, contentDescription = "Delete", tint = on)
+                SymbolIcon("close", contentDescription = "Delete", tint = on)
             }
         }
     }

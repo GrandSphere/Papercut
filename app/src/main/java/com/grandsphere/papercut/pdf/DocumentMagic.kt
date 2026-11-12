@@ -50,15 +50,18 @@ object DocumentMagic {
         }
     }
 
+    fun openDescriptor(context: Context, uri: Uri): ParcelFileDescriptor {
+        if (uri.scheme == "file") {
+            val path = uri.path ?: error("Unable to open $uri")
+            return ParcelFileDescriptor.open(File(path), ParcelFileDescriptor.MODE_READ_ONLY)
+        }
+        return context.contentResolver.openFileDescriptor(uri, "r")
+            ?: error("Unable to open $uri")
+    }
+
     fun isReadable(context: Context, uri: Uri): Boolean {
         return runCatching {
-            val pfd = if (uri.scheme == "file") {
-                val path = uri.path ?: return false
-                ParcelFileDescriptor.open(File(path), ParcelFileDescriptor.MODE_READ_ONLY)
-            } else {
-                context.contentResolver.openFileDescriptor(uri, "r")
-            } ?: return false
-            pfd.use { resolve(context, uri, it) }
+            openDescriptor(context, uri).use { resolve(context, uri, it) }
             true
         }.getOrDefault(false)
     }
@@ -83,47 +86,25 @@ object DocumentMagic {
         val fromHead = fromHeader(head)
         val fromName = fromName(name)
         val fromMime = fromMime(mime)
-        if (fromHead == PDF || fromHead == JPEG || fromHead == PNG) return fromHead
-        if (fromHead == EPUB) return EPUB
-        if (fromHead == XPS) return XPS
-        if (fromHead == ZIP || fromHead == CBZ) {
-            val zipHint = fromName ?: fromMime
-            if (zipHint == EPUB || zipHint == XPS || zipHint == OXPS || zipHint == CBZ) return zipHint
-            if (zipHint == CBZ_ALT) return CBZ
-            return CBZ
+        if (fromHead != null && fromHead != ZIP) return fromHead
+        if (fromHead == ZIP) {
+            val hint = fromName ?: fromMime
+            return if (hint != null && (hint == EPUB || hint == XPS || hint == OXPS || hint == CBZ)) hint else CBZ
         }
         return fromName ?: fromMime ?: fromHead ?: PDF
     }
 
+    private fun ByteArray.startsWith(minSize: Int, vararg prefix: Int): Boolean {
+        if (size < minSize) return false
+        for (i in prefix.indices) if (this[i] != prefix[i].toByte()) return false
+        return true
+    }
+
     private fun fromHeader(head: ByteArray): String? {
-        if (head.size >= 5 && head[0] == '%'.code.toByte() &&
-            head[1] == 'P'.code.toByte() &&
-            head[2] == 'D'.code.toByte() &&
-            head[3] == 'F'.code.toByte()
-        ) {
-            return PDF
-        }
-        if (head.size >= 3 &&
-            head[0] == 0xFF.toByte() &&
-            head[1] == 0xD8.toByte() &&
-            head[2] == 0xFF.toByte()
-        ) {
-            return JPEG
-        }
-        if (head.size >= 8 &&
-            head[0] == 0x89.toByte() &&
-            head[1] == 'P'.code.toByte() &&
-            head[2] == 'N'.code.toByte() &&
-            head[3] == 'G'.code.toByte()
-        ) {
-            return PNG
-        }
-        if (head.size >= 4 &&
-            head[0] == 'P'.code.toByte() &&
-            head[1] == 'K'.code.toByte() &&
-            head[2] == 0x03.toByte() &&
-            head[3] == 0x04.toByte()
-        ) {
+        if (head.startsWith(5, 0x25, 0x50, 0x44, 0x46)) return PDF
+        if (head.startsWith(3, 0xFF, 0xD8, 0xFF)) return JPEG
+        if (head.startsWith(8, 0x89, 0x50, 0x4E, 0x47)) return PNG
+        if (head.startsWith(4, 0x50, 0x4B, 0x03, 0x04)) {
             val text = head.toString(Charsets.ISO_8859_1)
             if (text.contains("application/epub+zip") || text.contains("mimetypeapplication/epub")) {
                 return EPUB

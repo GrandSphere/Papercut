@@ -23,8 +23,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -43,6 +41,7 @@ import com.grandsphere.papercut.BuildConfig
 import com.grandsphere.papercut.R
 import com.grandsphere.papercut.ui.settings.SettingsViewModel
 import com.grandsphere.papercut.ui.chrome.PapercutScreenBar
+import com.grandsphere.papercut.ui.chrome.SymbolIcon
 import com.grandsphere.papercut.ui.chrome.applyPapercutImmersive
 import com.grandsphere.papercut.ui.chrome.hidePapercutSystemBars
 import com.grandsphere.papercut.ui.theme.PapercutTheme
@@ -94,7 +93,7 @@ fun AboutScreen(onBack: () -> Unit) {
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             Icon(
-                painter = painterResource(R.drawable.ic_launcher_fg),
+                painter = painterResource(R.drawable.ic_papercut_logo),
                 contentDescription = "Papercut",
                 tint = MaterialTheme.colorScheme.onBackground,
                 modifier = Modifier.size(72.dp),
@@ -167,11 +166,11 @@ private fun AboutLink(title: String, url: String, subtitle: String? = null) {
                 )
             }
         }
-        Icon(
-            Icons.Default.OpenInNew,
+        SymbolIcon(
+            "open_in_new",
             contentDescription = "Open link",
             tint = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.size(18.dp),
+            size = 18.dp,
         )
     }
 }

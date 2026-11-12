@@ -29,4 +29,6 @@
     <string name="page_hint">Page number</string>
     <string name="go">Go</string>
     <string name="cancel">Cancel</string>
+    <string name="air_action_pen_press">Pen button</string>
+    <string name="air_action_pen_double">Pen button double tap</string>
 </resources>

@@ -7,6 +7,10 @@ import android.provider.OpenableColumns
 import java.net.URLDecoder
 
 object DocumentPaths {
+    private val DOWNLOAD_DIR = Regex("(?i)^Download/")
+    private val DOWNLOAD_ONLY = Regex("(?i)^Download$")
+    private val SD_ROOT = Regex("(?i)^/?storage/[0-9A-F]{4}-[0-9A-F]{4}/")
+    private val SD_MID = Regex("(?i)(?:^|/)storage/[0-9A-F]{4}-[0-9A-F]{4}/")
     data class Label(val displayName: String, val displayPath: String)
 
     fun label(context: Context, uri: Uri): Label {
@@ -124,8 +128,8 @@ object DocumentPaths {
             if (after.isNotBlank()) path = after
         }
         path = stripStorageRoot(path).trim('/')
-        path = path.replaceFirst(Regex("(?i)^Download/"), "Downloads/")
-        path = path.replaceFirst(Regex("(?i)^Download$"), "Downloads")
+        path = path.replaceFirst(DOWNLOAD_DIR, "Downloads/")
+        path = path.replaceFirst(DOWNLOAD_ONLY, "Downloads")
         if (path.isBlank() || isUgly(path)) return ""
         val last = path.substringAfterLast('/')
         if (looksLikeFileName(name) && last.equals(name, ignoreCase = true)) {
@@ -152,9 +156,9 @@ object DocumentPaths {
                 return path.substring(idx + marker.trimStart('/').length)
             }
         }
-        val sd = Regex("(?i)^/?storage/[0-9A-F]{4}-[0-9A-F]{4}/").find(path)
+        val sd = SD_ROOT.find(path)
         if (sd != null) return path.substring(sd.range.last + 1)
-        val sdMid = Regex("(?i)(?:^|/)storage/[0-9A-F]{4}-[0-9A-F]{4}/").find(path)
+        val sdMid = SD_MID.find(path)
         if (sdMid != null) return path.substring(sdMid.range.last + 1)
         return path
     }

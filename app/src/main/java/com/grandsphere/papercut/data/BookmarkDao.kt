@@ -17,11 +17,20 @@ interface BookmarkDao {
     @Query("SELECT COALESCE(MAX(sortOrder), -1) FROM bookmarks WHERE documentUri = :uri")
     suspend fun maxSortOrder(uri: String): Int
 
+    @Query("SELECT * FROM bookmarks WHERE documentUri = :uri AND name = :name LIMIT 1")
+    suspend fun findByName(uri: String, name: String): Bookmark?
+
+    @Query("DELETE FROM bookmarks WHERE documentUri = :uri AND name = :name AND id != :keepId")
+    suspend fun deleteOthersWithName(uri: String, name: String, keepId: Long)
+
     @Insert
     suspend fun insert(bookmark: Bookmark): Long
 
     @Update
     suspend fun update(bookmark: Bookmark)
+
+    @Query("UPDATE bookmarks SET sortOrder = :order WHERE id = :id")
+    suspend fun setSortOrder(id: Long, order: Int)
 
     @Query("DELETE FROM bookmarks WHERE id IN (:ids)")
     suspend fun deleteIds(ids: List<Long>)

@@ -7,6 +7,13 @@ data class PageInfo(
     val y0: Float
 )
 
+data class PdfRect(
+    val left: Float,
+    val top: Float,
+    val right: Float,
+    val bottom: Float,
+)
+
 data class CharBox(
     val c: Char,
     val ulx: Float,
@@ -28,7 +35,7 @@ data class CharBox(
 }
 
 data class PageLink(
-    val bounds: android.graphics.RectF,
+    val bounds: PdfRect,
     val uri: String,
     val isExternal: Boolean
 )
@@ -42,6 +49,6 @@ data class OutlineItem(
 
 data class PageContent(
     val chars: List<CharBox>,
-    val imageRects: List<android.graphics.RectF>,
+    val imageRects: List<PdfRect>,
     val links: List<PageLink> = emptyList()
 )

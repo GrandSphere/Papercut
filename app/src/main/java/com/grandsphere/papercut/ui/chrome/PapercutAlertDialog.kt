@@ -19,6 +19,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.CornerRadius
@@ -41,7 +42,9 @@ fun PapercutAlertDialog(
     dismissButton: @Composable (() -> Unit)? = null,
 ) {
     val glow = MaterialTheme.colorScheme.onBackground
+    val scaledDensity = LocalDensity.current
     BasicAlertDialog(onDismissRequest = onDismissRequest) {
+        CompositionLocalProvider(LocalDensity provides scaledDensity) {
         Box(
             Modifier
                 .padding(8.dp)
@@ -82,7 +85,14 @@ fun PapercutAlertDialog(
                 }
                 if (text != null) {
                     CompositionLocalProvider(LocalContentColor provides glow) {
-                        ProvideTextStyle(MaterialTheme.typography.bodyMedium, text)
+                        ProvideTextStyle(
+                            TextStyle(
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Normal,
+                                color = glow.copy(alpha = 0.7f),
+                            ),
+                            text,
+                        )
                     }
                 }
                 Spacer(Modifier.height(8.dp))
@@ -94,6 +104,7 @@ fun PapercutAlertDialog(
                     confirmButton()
                 }
             }
+        }
         }
     }
 }

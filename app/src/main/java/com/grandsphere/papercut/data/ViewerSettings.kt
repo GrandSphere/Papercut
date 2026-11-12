@@ -24,17 +24,17 @@ data class ViewerSettings(
     val horizontalPagePaddingDp: Int = 0,
     val pageBorderEnabled: Boolean = false,
     val pageBorderColor: Int = DEFAULT_PAGE_BORDER,
-    val allowFollowLinks: Boolean = true,
+    val allowFollowLinks: Boolean = false,
     val doubleTapMenu: Boolean = false,
     val singleTapMenu: Boolean = true,
-    val swipeFromBottomMenu: Boolean = true,
+    val swipeFromBottomMenu: Boolean = false,
     val appFontColor: Int = DEFAULT_APP_FONT,
     val actionColor: Int = DEFAULT_ACTION,
     val originalColors: Boolean = false,
     val twoFingerPan: Boolean = false,
-    val autoDisablePan: Boolean = true,
-    val allowTextSelection: Boolean = true,
-    val restoreLastPosition: Boolean = true,
+    val autoDisablePan: Boolean = false,
+    val allowTextSelection: Boolean = false,
+    val restoreLastPosition: Boolean = false,
     val alwaysDarkMode: Boolean = false,
     val imageContrast: Float = 1f,
     val imageAlpha: Float = 1f,
@@ -46,11 +46,56 @@ data class ViewerSettings(
     val lastScrollYPdf: Float = 0f,
     val folioEnabled: Boolean = false,
     val openFolioOnStartup: Boolean = false,
-    val folioOpenLastViewed: Boolean = true,
-    val folioStoreLastPosition: Boolean = true,
+    val folioOpenLastViewed: Boolean = false,
+    val folioStoreLastPosition: Boolean = false,
     val allowMultipleInstances: Boolean = false,
     val lastFolioItemId: Long = 0L,
+    val penModeEnabled: Boolean = false,
+    val penIgnoresScrollLock: Boolean = false,
+    val penOpenMenuOnTap: Boolean = false,
+    val penButtonPress: String = PenButtonAction.OPEN_BOOKMARKS.name,
+    val penButtonHold: String = PenButtonAction.ADD_QUICK_BOOKMARK.name,
+    val airActionButtonPress: String = PenButtonAction.OPEN_BOOKMARKS.name,
+    val airActionButtonHold: String = PenButtonAction.ADD_QUICK_BOOKMARK.name,
+    val penDoubleTapEnabled: Boolean = false,
+    val penButtonDouble: String = PenButtonAction.OPEN_BOOKMARKS.name,
+    val airActionButtonDouble: String = PenButtonAction.OPEN_BOOKMARKS.name,
+    val penAllowTextSelection: Boolean = false,
+    val penFollowLinks: Boolean = false,
+    val penScreenTap: String = PenButtonAction.DO_NOTHING.name,
+    val penScreenDouble: String = PenButtonAction.DO_NOTHING.name,
+    val penScreenHold: String = PenButtonAction.DO_NOTHING.name,
+    val showJumpOnMenubar: Boolean = false,
+    val quickJumpEnabled: Boolean = false,
+    val penDoubleTapPeriodMs: Int = DEFAULT_PEN_DOUBLE_TAP_MS,
+    val penHoldPeriodMs: Int = DEFAULT_PEN_HOLD_MS,
 ) {
+    fun penPressAction(): PenButtonAction =
+        PenButtonAction.fromStorage(penButtonPress, PenButtonAction.OPEN_BOOKMARKS)
+
+    fun penHoldAction(): PenButtonAction =
+        PenButtonAction.fromStorage(penButtonHold, PenButtonAction.ADD_QUICK_BOOKMARK)
+
+    fun airPressAction(): PenButtonAction =
+        PenButtonAction.fromStorage(airActionButtonPress, PenButtonAction.OPEN_BOOKMARKS)
+
+    fun airHoldAction(): PenButtonAction =
+        PenButtonAction.fromStorage(airActionButtonHold, PenButtonAction.ADD_QUICK_BOOKMARK)
+
+    fun penDoubleAction(): PenButtonAction =
+        PenButtonAction.fromStorage(penButtonDouble, PenButtonAction.OPEN_BOOKMARKS)
+
+    fun airDoubleAction(): PenButtonAction =
+        PenButtonAction.fromStorage(airActionButtonDouble, PenButtonAction.OPEN_BOOKMARKS)
+
+    fun penTapAction(): PenButtonAction =
+        PenButtonAction.fromStorage(penScreenTap, PenButtonAction.DO_NOTHING)
+
+    fun penScreenDoubleAction(): PenButtonAction =
+        PenButtonAction.fromStorage(penScreenDouble, PenButtonAction.DO_NOTHING)
+
+    fun penScreenHoldAction(): PenButtonAction =
+        PenButtonAction.fromStorage(penScreenHold, PenButtonAction.DO_NOTHING)
     fun lastMode(): ZoomMode = ZoomMode.fromStorage(zoomMode)
     fun startupMode(): ZoomMode = ZoomMode.fromStorage(startupZoomMode)
 
@@ -79,5 +124,17 @@ data class ViewerSettings(
         const val DEFAULT_PAGE_BORDER: Int = 0xFFB39DDB.toInt()
         const val DEFAULT_APP_FONT: Int = 0xFFE8EAED.toInt()
         const val DEFAULT_ACTION: Int = 0xFFE6D6F5.toInt()
+        const val DEFAULT_PEN_DOUBLE_TAP_MS: Int = 300
+        const val DEFAULT_PEN_HOLD_MS: Int = 400
+        const val MIN_PEN_TIMING_MS: Int = 50
+        const val MAX_PEN_TIMING_MS: Int = 2000
+
+        fun clampPenTimingMs(value: Int): Int =
+            value.coerceIn(MIN_PEN_TIMING_MS, MAX_PEN_TIMING_MS)
+
+        fun parsePenTimingMs(text: String, default: Int): Int {
+            val value = text.toIntOrNull() ?: return default
+            return clampPenTimingMs(value)
+        }
     }
 }

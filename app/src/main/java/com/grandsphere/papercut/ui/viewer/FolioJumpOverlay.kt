@@ -10,10 +10,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Add
-import androidx.compose.material.icons.outlined.Edit
-import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
@@ -27,6 +23,7 @@ import androidx.compose.ui.unit.sp
 import com.grandsphere.papercut.data.DocumentPaths
 import com.grandsphere.papercut.data.FolioItem
 import com.grandsphere.papercut.ui.chrome.PapercutOverlay
+import com.grandsphere.papercut.ui.chrome.SymbolIcon
 
 @Composable
 fun FolioJumpOverlay(
@@ -47,15 +44,15 @@ fun FolioJumpOverlay(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 IconButton(onClick = onManage) {
-                    Icon(
-                        Icons.Outlined.Edit,
+                    SymbolIcon(
+                        "edit",
                         contentDescription = "Manage Folio",
                         tint = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.75f),
                     )
                 }
                 IconButton(onClick = onAdd) {
-                    Icon(
-                        Icons.Outlined.Add,
+                    SymbolIcon(
+                        "add",
                         contentDescription = "Add",
                         tint = MaterialTheme.colorScheme.onBackground,
                     )

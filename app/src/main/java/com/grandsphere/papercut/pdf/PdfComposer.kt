@@ -3,28 +3,31 @@ package com.grandsphere.papercut.pdf
 import android.content.Context
 import android.net.Uri
 import android.os.ParcelFileDescriptor
-import android.system.Os
-import android.system.OsConstants
 import com.artifex.mupdf.fitz.Document
 import com.artifex.mupdf.fitz.DocumentWriter
 import com.artifex.mupdf.fitz.Matrix
 import com.artifex.mupdf.fitz.PDFDocument
 import com.artifex.mupdf.fitz.PDFObject
-import com.artifex.mupdf.fitz.SeekableInputStream
-import com.artifex.mupdf.fitz.SeekableStream
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 
 object PdfComposer {
-    suspend fun extractPages(context: Context, uri: Uri, pages: List<Int>, dest: File) {
+    suspend fun extractPages(
+        context: Context,
+        uri: Uri,
+        pages: List<Int>,
+        dest: File,
+        rotates: List<Int> = emptyList(),
+    ) {
         withContext(Dispatchers.IO) {
             if (pages.isEmpty()) error("No pages")
             val dst = PDFDocument()
             try {
                 openPdf(context, uri).use { src ->
-                    pages.forEach { index ->
+                    pages.forEachIndexed { i, index ->
                         dst.graftPage(dst.countPages(), src.doc, index)
+                        applyRotate(dst, dst.countPages() - 1, rotates.getOrElse(i) { 0 })
                     }
                 }
                 savePdf(dst, dest)
@@ -32,6 +35,18 @@ object PdfComposer {
                 dst.destroy()
             }
         }
+    }
+
+    private fun applyRotate(doc: PDFDocument, pageIndex: Int, extraCw: Int) {
+        val extra = PageRotation.norm(extraCw)
+        if (extra == 0) return
+        val page = runCatching { doc.findPage(pageIndex) }.getOrNull() ?: return
+        var current = 0
+        val existing = runCatching { page.getInheritable("Rotate") }.getOrNull()
+        if (existing != null && !existing.isNull) {
+            current = runCatching { existing.asInteger() }.getOrDefault(0)
+        }
+        runCatching { page.put("Rotate", PageRotation.norm(current + extra)) }
     }
 
     suspend fun combine(context: Context, uris: List<Uri>, dest: File, fontScale: Float = 1f) {
@@ -85,8 +100,7 @@ object PdfComposer {
             for (i in 0 until count) {
                 val page = src.loadPage(i)
                 try {
-                    val box = page.bounds
-                    val dev = writer.beginPage(box)
+                    val dev = writer.beginPage(page.bounds)
                     page.run(dev, Matrix.Identity(), null)
                     writer.endPage()
                 } finally {
@@ -111,13 +125,7 @@ object PdfComposer {
         deleteKey(trailer, "ID")
         val root = trailer.get("Root")
         if (root != null && !root.isNull) {
-            deleteKey(root, "Metadata")
-            deleteKey(root, "Outlines")
-            deleteKey(root, "OpenAction")
-            deleteKey(root, "AA")
-            deleteKey(root, "PieceInfo")
-            deleteKey(root, "Perms")
-            deleteKey(root, "Lang")
+            ROOT_TRACING_KEYS.forEach { deleteKey(root, it) }
         }
     }
 
@@ -126,34 +134,26 @@ object PdfComposer {
     }
 
     private fun openPdf(context: Context, uri: Uri): OpenedPdf {
-        return openAny(context, uri, 1f).let { opened ->
-            val pdf = opened.doc as? PDFDocument
-            if (pdf == null) {
-                opened.close()
-                error("NOT_PDF")
-            }
-            OpenedPdf(pdf, opened)
+        val opened = openAny(context, uri, 1f)
+        val pdf = opened.doc as? PDFDocument
+        if (pdf == null) {
+            opened.close()
+            error("NOT_PDF")
         }
+        return OpenedPdf(pdf, opened)
     }
 
     private fun openAny(context: Context, uri: Uri, fontScale: Float): OpenedDoc {
-        val pfd = if (uri.scheme == "file") {
-            val path = uri.path ?: error("Unable to open $uri")
-            ParcelFileDescriptor.open(File(path), ParcelFileDescriptor.MODE_READ_ONLY)
-        } else {
-            context.contentResolver.openFileDescriptor(uri, "r") ?: error("Unable to open $uri")
-        }
+        val pfd = DocumentMagic.openDescriptor(context, uri)
         return try {
             val magic = DocumentMagic.resolve(context, uri, pfd)
-            val opened = Document.openDocument(PfdStream(pfd), magic)
+            val opened = Document.openDocument(PfdSeekableStream(pfd), magic)
             if (opened.needsPassword()) {
                 opened.destroy()
                 pfd.close()
                 error("PASSWORD")
             }
-            if (opened.isReflowable) {
-                opened.layout(450f, 600f, 12f * fontScale.coerceIn(0.7f, 1.4f))
-            }
+            MuPdfEngine.layoutReflowable(opened, fontScale)
             OpenedDoc(opened, pfd)
         } catch (t: Throwable) {
             runCatching { pfd.close() }
@@ -175,32 +175,11 @@ object PdfComposer {
         val doc: PDFDocument,
         private val owner: OpenedDoc,
     ) : AutoCloseable {
-        override fun close() {
-            owner.close()
-        }
+        override fun close() = owner.close()
     }
 
-    private class PfdStream(
-        private val pfd: ParcelFileDescriptor,
-    ) : SeekableInputStream {
-        override fun read(b: ByteArray): Int {
-            val n = Os.read(pfd.fileDescriptor, b, 0, b.size)
-            return if (n == 0) -1 else n
-        }
-
-        override fun position(): Long =
-            Os.lseek(pfd.fileDescriptor, 0, OsConstants.SEEK_CUR)
-
-        override fun seek(offset: Long, whence: Int): Long {
-            val osWhence = when (whence) {
-                SeekableStream.SEEK_SET -> OsConstants.SEEK_SET
-                SeekableStream.SEEK_CUR -> OsConstants.SEEK_CUR
-                SeekableStream.SEEK_END -> OsConstants.SEEK_END
-                else -> OsConstants.SEEK_SET
-            }
-            return Os.lseek(pfd.fileDescriptor, offset, osWhence)
-        }
-    }
+    private val ROOT_TRACING_KEYS =
+        listOf("Metadata", "Outlines", "OpenAction", "AA", "PieceInfo", "Perms", "Lang")
 
     private const val SAVE_OPTIONS = "garbage=2,pretty=no,compress=yes,sanitize=yes"
 }

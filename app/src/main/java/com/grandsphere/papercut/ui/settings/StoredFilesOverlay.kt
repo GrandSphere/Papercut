@@ -8,12 +8,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.CheckBox
-import androidx.compose.material.icons.outlined.CheckBoxOutlineBlank
-import androidx.compose.material.icons.outlined.Close
-import androidx.compose.material.icons.outlined.Share
-import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -30,6 +24,7 @@ import androidx.compose.ui.unit.sp
 import com.grandsphere.papercut.data.StoredEntry
 import com.grandsphere.papercut.ui.chrome.OverlaySelectActions
 import com.grandsphere.papercut.ui.chrome.PapercutOverlay
+import com.grandsphere.papercut.ui.chrome.SymbolIcon
 
 @Composable
 fun StoredFilesOverlay(
@@ -117,14 +112,14 @@ fun StoredFilesOverlay(
                         }
                         if (!selecting) {
                             IconButton(onClick = { onShare(entry) }) {
-                                Icon(Icons.Outlined.Share, contentDescription = "Share", tint = on)
+                                SymbolIcon("share", contentDescription = "Share", tint = on)
                             }
                             IconButton(onClick = { onDelete(listOf(entry)) }) {
-                                Icon(Icons.Outlined.Close, contentDescription = "Delete", tint = on)
+                                SymbolIcon("close", contentDescription = "Delete", tint = on)
                             }
                         } else {
-                            Icon(
-                                if (checked) Icons.Outlined.CheckBox else Icons.Outlined.CheckBoxOutlineBlank,
+                            SymbolIcon(
+                                if (checked) "check_box" else "check_box_outline_blank",
                                 contentDescription = null,
                                 tint = on,
                                 modifier = Modifier.padding(horizontal = 12.dp),

@@ -9,7 +9,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
     entities = [ViewerSettings::class, PdfDocument::class, Bookmark::class, FolioItem::class],
-            version = 21,
+            version = 28,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -228,6 +228,96 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_22_23 = object : Migration(22, 23) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE settings ADD COLUMN penOpenMenuOnTap INTEGER NOT NULL DEFAULT 1")
+            }
+        }
+
+        private val MIGRATION_23_24 = object : Migration(23, 24) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE settings ADD COLUMN airActionButtonPress TEXT NOT NULL DEFAULT 'OPEN_BOOKMARKS'",
+                )
+                db.execSQL(
+                    "ALTER TABLE settings ADD COLUMN airActionButtonHold TEXT NOT NULL DEFAULT 'ADD_QUICK_BOOKMARK'",
+                )
+            }
+        }
+
+        private val MIGRATION_24_25 = object : Migration(24, 25) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE settings ADD COLUMN penDoubleTapEnabled INTEGER NOT NULL DEFAULT 0")
+                db.execSQL(
+                    "ALTER TABLE settings ADD COLUMN penButtonDouble TEXT NOT NULL DEFAULT 'OPEN_BOOKMARKS'",
+                )
+                db.execSQL(
+                    "ALTER TABLE settings ADD COLUMN airActionButtonDouble TEXT NOT NULL DEFAULT 'OPEN_BOOKMARKS'",
+                )
+            }
+        }
+
+        private val MIGRATION_25_26 = object : Migration(25, 26) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE settings ADD COLUMN penScreenTap TEXT NOT NULL DEFAULT 'DEFAULT_INTERACTION'",
+                )
+                db.execSQL(
+                    "ALTER TABLE settings ADD COLUMN penScreenDouble TEXT NOT NULL DEFAULT 'DO_NOTHING'",
+                )
+                db.execSQL(
+                    "ALTER TABLE settings ADD COLUMN penScreenHold TEXT NOT NULL DEFAULT 'DO_NOTHING'",
+                )
+                db.execSQL(
+                    """
+                    UPDATE settings SET penScreenTap = CASE
+                        WHEN penFollowLinks = 1 AND penOpenMenuOnTap = 0 THEN 'FOLLOW_LINK'
+                        WHEN penOpenMenuOnTap = 1 THEN 'DEFAULT_INTERACTION'
+                        ELSE 'DO_NOTHING'
+                    END
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    """
+                    UPDATE settings SET penScreenHold = CASE
+                        WHEN penAllowTextSelection = 1 THEN 'DEFAULT_INTERACTION'
+                        ELSE 'DO_NOTHING'
+                    END
+                    """.trimIndent(),
+                )
+            }
+        }
+
+        private val MIGRATION_21_22 = object : Migration(21, 22) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE settings ADD COLUMN penModeEnabled INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE settings ADD COLUMN penIgnoresScrollLock INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE settings ADD COLUMN penButtonPress TEXT NOT NULL DEFAULT 'OPEN_BOOKMARKS'")
+                db.execSQL("ALTER TABLE settings ADD COLUMN penButtonHold TEXT NOT NULL DEFAULT 'ADD_QUICK_BOOKMARK'")
+                db.execSQL("ALTER TABLE settings ADD COLUMN penAllowTextSelection INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE settings ADD COLUMN penFollowLinks INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE settings ADD COLUMN showJumpOnMenubar INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE folio_items ADD COLUMN pageRotations TEXT NOT NULL DEFAULT '[]'")
+            }
+        }
+
+        private val MIGRATION_26_27 = object : Migration(26, 27) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE settings ADD COLUMN quickJumpEnabled INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        private val MIGRATION_27_28 = object : Migration(27, 28) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE settings ADD COLUMN penDoubleTapPeriodMs INTEGER NOT NULL DEFAULT ${ViewerSettings.DEFAULT_PEN_DOUBLE_TAP_MS}",
+                )
+                db.execSQL(
+                    "ALTER TABLE settings ADD COLUMN penHoldPeriodMs INTEGER NOT NULL DEFAULT ${ViewerSettings.DEFAULT_PEN_HOLD_MS}",
+                )
+            }
+        }
+
         fun create(context: Context): AppDatabase =
             Room.databaseBuilder(context, AppDatabase::class.java, "Papercut.db")
                 .addMigrations(
@@ -251,6 +341,13 @@ abstract class AppDatabase : RoomDatabase() {
                     MIGRATION_18_19,
                     MIGRATION_19_20,
                     MIGRATION_20_21,
+                    MIGRATION_21_22,
+                    MIGRATION_22_23,
+                    MIGRATION_23_24,
+                    MIGRATION_24_25,
+                    MIGRATION_25_26,
+                    MIGRATION_26_27,
+                    MIGRATION_27_28,
                 )
                 .fallbackToDestructiveMigration()
                 .build()

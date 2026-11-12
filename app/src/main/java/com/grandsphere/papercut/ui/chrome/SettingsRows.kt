@@ -8,14 +8,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Share
-import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
@@ -27,6 +22,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -160,15 +156,13 @@ fun SettingsTapRow(
         if (onShare != null) {
             val iconSize = with(LocalDensity.current) { (16.sp * 0.75f).toDp() }
             CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified) {
-                Icon(
-                    Icons.Outlined.Share,
+                SymbolIcon(
+                    "share",
                     contentDescription = "Share",
                     tint = MaterialTheme.colorScheme.onBackground,
+                    size = iconSize,
                     modifier = Modifier
-                        .height(0.dp)
-                        .wrapContentHeight(unbounded = true, align = Alignment.CenterVertically)
                         .padding(start = 8.dp)
-                        .size(iconSize)
                         .clickable(onClick = onShare),
                 )
             }
@@ -177,20 +171,25 @@ fun SettingsTapRow(
 }
 
 @Composable
-private fun PapercutSwitch(checked: Boolean, onChecked: (Boolean) -> Unit, enabled: Boolean = true) {
+internal fun PapercutSwitch(checked: Boolean, onChecked: (Boolean) -> Unit, enabled: Boolean = true) {
     val action = MaterialTheme.colorScheme.secondaryContainer
     val on = MaterialTheme.colorScheme.onBackground
+    val bg = MaterialTheme.colorScheme.background
+    val handle = on.copy(alpha = 0.7f).compositeOver(bg)
+    val disabledHandle = on.copy(alpha = 0.35f).compositeOver(bg)
     Switch(
         checked = checked,
         onCheckedChange = onChecked,
         enabled = enabled,
         colors = SwitchDefaults.colors(
             checkedTrackColor = action,
-            checkedThumbColor = on,
+            checkedThumbColor = handle,
             checkedBorderColor = Color.Transparent,
             uncheckedTrackColor = MaterialTheme.colorScheme.surfaceVariant,
-            uncheckedThumbColor = on.copy(alpha = 0.7f),
+            uncheckedThumbColor = handle,
             uncheckedBorderColor = MaterialTheme.colorScheme.outline,
+            disabledCheckedThumbColor = disabledHandle,
+            disabledUncheckedThumbColor = disabledHandle,
         ),
     )
 }

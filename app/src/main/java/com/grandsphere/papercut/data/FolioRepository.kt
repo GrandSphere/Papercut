@@ -2,9 +2,12 @@ package com.grandsphere.papercut.data
 
 import android.content.ContentResolver
 import android.net.Uri
+import androidx.room.RoomDatabase
+import androidx.room.withTransaction
 import kotlinx.coroutines.flow.Flow
 
 class FolioRepository(
+    private val db: RoomDatabase,
     private val dao: FolioDao,
     private val store: FolioStore,
     private val resolver: ContentResolver,
@@ -47,14 +50,17 @@ class FolioRepository(
             lastPageIndex = pageIndex,
             lastScrollXPdf = scrollX,
             lastScrollYPdf = scrollY,
+            pageRotations = "[]",
         )
         val id = dao.insert(created)
         val row = dao.getById(id) ?: created.copy(id = id)
         val copied = store.copyFrom(resolver, source, row.id)
         if (!copied) {
-            dao.deleteIds(listOf(row.id))
+            db.withTransaction {
+                dao.deleteIds(listOf(row.id))
+                reindex()
+            }
             store.delete(row.id)
-            reindex()
             return null
         }
         val stored = row.copy(localName = row.id.toString())
@@ -97,52 +103,47 @@ class FolioRepository(
         scrollX: Float,
         scrollY: Float,
     ) {
-        val current = dao.getById(id) ?: return
-        dao.update(
-            current.copy(
-                zoomMode = zoomMode,
-                customZoomPercent = customZoomPercent,
-                lockZoom = lockZoom,
-                lockSideScroll = lockSideScroll,
-                originalColors = originalColors,
-                lastPageIndex = pageIndex,
-                lastScrollXPdf = scrollX,
-                lastScrollYPdf = scrollY,
-            ),
+        dao.updateSnapshot(
+            id, zoomMode, customZoomPercent, lockZoom, lockSideScroll, originalColors,
+            pageIndex, scrollX, scrollY,
         )
     }
 
+    suspend fun saveRotations(id: Long, pageRotations: String) {
+        val current = dao.getById(id) ?: return
+        dao.update(current.copy(pageRotations = pageRotations))
+    }
+
     suspend fun setHidden(ids: List<Long>, hidden: Boolean) {
-        ids.forEach { id ->
-            val row = dao.getById(id) ?: return@forEach
-            if (row.hidden != hidden) dao.update(row.copy(hidden = hidden))
-        }
+        if (ids.isEmpty()) return
+        dao.setHidden(ids, hidden)
     }
 
     suspend fun setStartItem(id: Long) {
-        dao.clearStartItems()
-        val row = dao.getById(id) ?: return
-        dao.update(row.copy(isStartItem = true))
+        db.withTransaction {
+            dao.clearStartItems()
+            dao.markStartItem(id)
+        }
     }
 
     suspend fun delete(ids: List<Long>) {
         if (ids.isEmpty()) return
         ids.forEach { store.delete(it) }
-        dao.deleteIds(ids)
-        reindex()
+        db.withTransaction {
+            dao.deleteIds(ids)
+            reindex()
+        }
     }
 
     suspend fun reorder(orderedIds: List<Long>) {
-        val all = dao.getAll().associateBy { it.id }
-        orderedIds.forEachIndexed { index, id ->
-            val row = all[id] ?: return@forEachIndexed
-            if (row.sortOrder != index) dao.update(row.copy(sortOrder = index))
+        db.withTransaction {
+            orderedIds.forEachIndexed { index, id -> dao.setSortOrder(id, index) }
         }
     }
 
     private suspend fun reindex() {
         dao.getAll().forEachIndexed { index, item ->
-            if (item.sortOrder != index) dao.update(item.copy(sortOrder = index))
+            if (item.sortOrder != index) dao.setSortOrder(item.id, index)
         }
     }
 }

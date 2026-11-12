@@ -14,12 +14,6 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.CheckBox
-import androidx.compose.material.icons.outlined.CheckBoxOutlineBlank
-import androidx.compose.material.icons.outlined.Close
-import androidx.compose.material.icons.outlined.VisibilityOff
-import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
@@ -46,6 +40,7 @@ import com.grandsphere.papercut.data.DocumentPaths
 import com.grandsphere.papercut.data.FolioItem
 import com.grandsphere.papercut.ui.chrome.OverlaySelectActions
 import com.grandsphere.papercut.ui.chrome.PapercutOverlay
+import com.grandsphere.papercut.ui.chrome.SymbolIcon
 import kotlin.math.abs
 
 private const val MutedAlpha = 0.45f
@@ -350,8 +345,8 @@ private fun FolioRowContent(
         verticalAlignment = Alignment.Top,
     ) {
         if (selecting) {
-            Icon(
-                if (checked) Icons.Outlined.CheckBox else Icons.Outlined.CheckBoxOutlineBlank,
+            SymbolIcon(
+                if (checked) "check_box" else "check_box_outline_blank",
                 contentDescription = null,
                 tint = on,
                 modifier = Modifier
@@ -400,8 +395,8 @@ private fun FolioRowContent(
                     .size(40.dp)
                     .align(Alignment.CenterVertically),
             ) {
-                Icon(
-                    Icons.Outlined.VisibilityOff,
+                SymbolIcon(
+                    "visibility_off",
                     contentDescription = if (item.hidden) "Show" else "Hide",
                     tint = on.copy(alpha = if (item.hidden) 0.35f else 0.85f),
                 )
@@ -412,7 +407,7 @@ private fun FolioRowContent(
                     .size(40.dp)
                     .align(Alignment.CenterVertically),
             ) {
-                Icon(Icons.Outlined.Close, contentDescription = "Delete", tint = on)
+                SymbolIcon("close", contentDescription = "Delete", tint = on)
             }
         }
     }

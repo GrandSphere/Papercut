@@ -1,8 +1,11 @@
 package com.grandsphere.papercut.data
 
+import androidx.room.RoomDatabase
+import androidx.room.withTransaction
 import kotlinx.coroutines.flow.Flow
 
 class BookmarkRepository(
+    private val db: RoomDatabase,
     private val documents: DocumentDao,
     private val bookmarks: BookmarkDao,
 ) {
@@ -11,6 +14,8 @@ class BookmarkRepository(
     fun observeBookmarks(uri: String): Flow<List<Bookmark>> = bookmarks.observeForDocument(uri)
 
     suspend fun getDocument(uri: String): PdfDocument? = documents.get(uri)
+
+    suspend fun findBookmarkByName(uri: String, name: String): Bookmark? = bookmarks.findByName(uri, name)
 
     suspend fun findByNameAndPath(name: String, path: String): PdfDocument? {
         if (name.isBlank()) return null
@@ -52,31 +57,13 @@ class BookmarkRepository(
     }
 
     suspend fun saveLastPosition(uri: String, page: Int, scrollX: Float, scrollY: Float) {
-        val current = documents.get(uri)
-        if (current == null) {
-            val label = DocumentPaths.fromUriString(uri)
-            documents.insertIgnore(
-                PdfDocument(
-                    uri = uri,
-                    displayName = label.displayName,
-                    displayPath = label.displayPath,
-                    lastPageIndex = page,
-                    lastScrollXPdf = scrollX,
-                    lastScrollYPdf = scrollY,
-                ),
-            )
-            val created = documents.get(uri) ?: return
-            documents.update(
-                created.copy(
-                    lastPageIndex = page,
-                    lastScrollXPdf = scrollX,
-                    lastScrollYPdf = scrollY,
-                ),
-            )
-            return
-        }
-        documents.update(
-            current.copy(
+        if (documents.updatePosition(uri, page, scrollX, scrollY) > 0) return
+        val label = DocumentPaths.fromUriString(uri)
+        documents.insertIgnore(
+            PdfDocument(
+                uri = uri,
+                displayName = label.displayName,
+                displayPath = label.displayPath,
                 lastPageIndex = page,
                 lastScrollXPdf = scrollX,
                 lastScrollYPdf = scrollY,
@@ -104,8 +91,42 @@ class BookmarkRepository(
         return row.copy(id = id)
     }
 
+    suspend fun upsertNamed(
+        uri: String,
+        name: String,
+        pageIndex: Int,
+        scrollX: Float,
+        scrollY: Float,
+    ): Bookmark {
+        val existing = bookmarks.findByName(uri, name)
+        if (existing != null) {
+            val next = existing.copy(
+                pageIndex = pageIndex,
+                scrollXPdf = scrollX,
+                scrollYPdf = scrollY,
+            )
+            bookmarks.update(next)
+            return next
+        }
+        val order = bookmarks.maxSortOrder(uri) + 1
+        val row = Bookmark(
+            documentUri = uri,
+            name = name,
+            pageIndex = pageIndex,
+            scrollXPdf = scrollX,
+            scrollYPdf = scrollY,
+            sortOrder = order,
+        )
+        val id = bookmarks.insert(row)
+        return row.copy(id = id)
+    }
+
     suspend fun updateBookmark(bookmark: Bookmark) {
-        bookmarks.update(bookmark)
+        val trimmed = bookmark.copy(name = bookmark.name.trim().ifBlank { "Quick Bookmark" })
+        if (JumpBookmarks.isJumpName(trimmed.name) && trimmed.id != 0L) {
+            bookmarks.deleteOthersWithName(trimmed.documentUri, trimmed.name, trimmed.id)
+        }
+        bookmarks.update(trimmed)
     }
 
     suspend fun deleteBookmarks(ids: List<Long>) {
@@ -114,12 +135,8 @@ class BookmarkRepository(
     }
 
     suspend fun reorder(orderedIds: List<Long>) {
-        val all = bookmarks.getAll().associateBy { it.id }
-        orderedIds.forEachIndexed { index, id ->
-            val row = all[id] ?: return@forEachIndexed
-            if (row.sortOrder != index) {
-                bookmarks.update(row.copy(sortOrder = index))
-            }
+        db.withTransaction {
+            orderedIds.forEachIndexed { index, id -> bookmarks.setSortOrder(id, index) }
         }
     }
 
@@ -139,6 +156,10 @@ class BookmarkRepository(
     }
 
     suspend fun importParsed(parsed: BackupJson.Parsed) {
+        db.withTransaction { importParsedLocked(parsed) }
+    }
+
+    private suspend fun importParsedLocked(parsed: BackupJson.Parsed) {
         parsed.documents?.forEach { incoming ->
             val existing = documents.get(incoming.uri)
             if (existing == null) {

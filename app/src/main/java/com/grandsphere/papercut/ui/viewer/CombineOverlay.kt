@@ -14,12 +14,6 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Add
-import androidx.compose.material.icons.outlined.Close
-import androidx.compose.material.icons.outlined.Save
-import androidx.compose.material.icons.outlined.Share
-import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
@@ -43,6 +37,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import com.grandsphere.papercut.data.DocumentPaths
 import com.grandsphere.papercut.ui.chrome.PapercutOverlay
+import com.grandsphere.papercut.ui.chrome.SymbolIcon
 import kotlin.math.abs
 
 data class CombineEntry(
@@ -97,18 +92,18 @@ fun CombineOverlay(
         actions = {
             val on = MaterialTheme.colorScheme.onBackground
             IconButton(onClick = onAdd) {
-                Icon(Icons.Outlined.Add, contentDescription = "Add", tint = on)
+                SymbolIcon("add", contentDescription = "Add", tint = on)
             }
             IconButton(onClick = onExport, enabled = local.isNotEmpty()) {
-                Icon(
-                    Icons.Outlined.Save,
+                SymbolIcon(
+                    "save",
                     contentDescription = "Export",
                     tint = on.copy(alpha = if (local.isNotEmpty()) 1f else 0.35f),
                 )
             }
             IconButton(onClick = onShare, enabled = local.isNotEmpty()) {
-                Icon(
-                    Icons.Outlined.Share,
+                SymbolIcon(
+                    "share",
                     contentDescription = "Share",
                     tint = on.copy(alpha = if (local.isNotEmpty()) 1f else 0.35f),
                 )
@@ -201,7 +196,7 @@ fun CombineOverlay(
                             onClick = { publish(local.filter { it.uri != item.uri }) },
                             modifier = Modifier.align(Alignment.CenterVertically),
                         ) {
-                            Icon(Icons.Outlined.Close, contentDescription = "Remove", tint = on)
+                            SymbolIcon("close", contentDescription = "Remove", tint = on)
                         }
                     }
                 }

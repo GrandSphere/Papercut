@@ -13,12 +13,12 @@ import kotlinx.coroutines.runBlocking
 
 class PapercutApp : Application() {
     val database by lazy { AppDatabase.create(this) }
-    val settingsRepository by lazy { SettingsRepository(database.settingsDao()) }
+    val settingsRepository by lazy { SettingsRepository(database, database.settingsDao()) }
     val bookmarkRepository by lazy {
-        BookmarkRepository(database.documentDao(), database.bookmarkDao())
+        BookmarkRepository(database, database.documentDao(), database.bookmarkDao())
     }
     val folioRepository by lazy {
-        FolioRepository(database.folioDao(), FolioStore(AppFiles.stored(this)), contentResolver)
+        FolioRepository(database, database.folioDao(), FolioStore(AppFiles.stored(this)), contentResolver)
     }
 
     private val liveViewers = ArrayList<ViewerActivity>()

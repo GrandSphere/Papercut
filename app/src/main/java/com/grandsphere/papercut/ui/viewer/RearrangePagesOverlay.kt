@@ -12,9 +12,6 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Close
-import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
@@ -36,6 +33,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import com.grandsphere.papercut.ui.chrome.PapercutOverlay
+import com.grandsphere.papercut.ui.chrome.SymbolIcon
 import kotlin.math.abs
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -146,7 +144,7 @@ fun RearrangePagesOverlay(
                             modifier = Modifier.weight(1f),
                         )
                         IconButton(onClick = { publish(local.filterIndexed { i, _ -> i != index }) }) {
-                            Icon(Icons.Outlined.Close, contentDescription = "Remove", tint = on)
+                            SymbolIcon("close", contentDescription = "Remove", tint = on)
                         }
                     }
                 }

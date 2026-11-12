@@ -25,4 +25,5 @@ data class FolioItem(
     val lastScrollXPdf: Float = 0f,
     val lastScrollYPdf: Float = 0f,
     val localName: String = "",
+    val pageRotations: String = "[]",
 )

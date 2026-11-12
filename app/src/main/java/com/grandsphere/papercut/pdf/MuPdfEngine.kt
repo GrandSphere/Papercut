@@ -2,27 +2,24 @@ package com.grandsphere.papercut.pdf
 
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.RectF
 import android.net.Uri
 import android.os.ParcelFileDescriptor
-import android.system.Os
-import android.system.OsConstants
 import com.artifex.mupdf.fitz.ColorSpace
 import com.artifex.mupdf.fitz.Document
 import com.artifex.mupdf.fitz.Font
 import com.artifex.mupdf.fitz.Image
-import com.artifex.mupdf.fitz.Matrix
 import com.artifex.mupdf.fitz.Link
+import com.artifex.mupdf.fitz.Matrix
 import com.artifex.mupdf.fitz.Outline
+import com.artifex.mupdf.fitz.Pixmap
 import com.artifex.mupdf.fitz.Point
 import com.artifex.mupdf.fitz.Quad
 import com.artifex.mupdf.fitz.Rect
-import com.artifex.mupdf.fitz.SeekableInputStream
-import com.artifex.mupdf.fitz.SeekableStream
 import com.artifex.mupdf.fitz.StructuredTextWalker
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.Collections
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
@@ -42,15 +39,13 @@ class MuPdfEngine(
     private var layoutEm = 12f
     private var openedMime: String = DocumentMagic.PDF
     private val pageInfos = mutableListOf<PageInfo>()
-    private val measured = ArrayList<Boolean>()
+    private var measured = BooleanArray(0)
+    private var measuredCount = 0
     private val contentCache = HashMap<Int, PageContent>()
-    private val outlineCache = ArrayList<OutlineItem>()
+    private var outlineCache: List<OutlineItem>? = null
 
     val pages: List<PageInfo>
         get() = pageInfos
-
-    val pageCount: Int
-        get() = pageInfos.size
 
     val mime: String
         get() = openedMime
@@ -59,30 +54,35 @@ class MuPdfEngine(
 
     suspend fun open(context: Context, uri: Uri, fontScale: Float, startPage: Int = 0) =
         withContext(dispatcher) {
-            closeLocked()
-            layoutEm = 12f * fontScale.coerceIn(0.7f, 1.4f)
-            openStartPage = startPage
+            beginOpenLocked(fontScale, startPage)
             val app = context.applicationContext
-            val opened = openDescriptor(app, uri)
-            openPfdLocked(opened, DocumentMagic.resolve(app, uri, opened))
+            val opened = DocumentMagic.openDescriptor(app, uri)
+            val magic = try {
+                DocumentMagic.resolve(app, uri, opened)
+            } catch (t: Throwable) {
+                runCatching { opened.close() }
+                throw t
+            }
+            openPfdLocked(opened, magic)
         }
 
     suspend fun openFile(file: File, fontScale: Float, startPage: Int = 0) =
         withContext(dispatcher) {
-            closeLocked()
-            layoutEm = 12f * fontScale.coerceIn(0.7f, 1.4f)
-            openStartPage = startPage
+            beginOpenLocked(fontScale, startPage)
             val opened = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
-            openPfdLocked(opened, DocumentMagic.resolve(file, opened))
+            val magic = try {
+                DocumentMagic.resolve(file, opened)
+            } catch (t: Throwable) {
+                runCatching { opened.close() }
+                throw t
+            }
+            openPfdLocked(opened, magic)
         }
 
-    private fun openDescriptor(context: Context, uri: Uri): ParcelFileDescriptor {
-        if (uri.scheme == "file") {
-            val path = uri.path ?: error("Unable to open $uri")
-            return ParcelFileDescriptor.open(File(path), ParcelFileDescriptor.MODE_READ_ONLY)
-        }
-        return context.contentResolver.openFileDescriptor(uri, "r")
-            ?: error("Unable to open $uri")
+    private fun beginOpenLocked(fontScale: Float, startPage: Int) {
+        closeLocked()
+        layoutEm = layoutEm(fontScale)
+        openStartPage = startPage
     }
 
     private fun openPfdLocked(opened: ParcelFileDescriptor, magic: String) {
@@ -113,7 +113,7 @@ class MuPdfEngine(
 
     private fun finishOpenLocked(doc: Document) {
         if (doc.isReflowable) {
-            doc.layout(450f, 600f, layoutEm)
+            doc.layout(REFLOW_WIDTH, REFLOW_HEIGHT, layoutEm)
         }
         loadStartPageLocked(doc, openStartPage)
     }
@@ -121,18 +121,29 @@ class MuPdfEngine(
     private fun loadStartPageLocked(doc: Document, startPage: Int) {
         val count = doc.countPages().coerceAtLeast(0)
         pageInfos.clear()
-        measured.clear()
         contentCache.clear()
-        outlineCache.clear()
+        outlineCache = null
+        measured = BooleanArray(count)
+        measuredCount = 0
         if (count <= 0) return
         val start = startPage.coerceIn(0, count - 1)
         val seed = measurePageLocked(doc, start)
-        repeat(count) {
-            pageInfos += seed
-            measured += false
+        pageInfos.addAll(Collections.nCopies(count, seed))
+        markMeasured(start)
+    }
+
+    private fun markMeasured(index: Int) {
+        if (!measured[index]) {
+            measured[index] = true
+            measuredCount++
         }
-        pageInfos[start] = seed
-        measured[start] = true
+    }
+
+    private fun ensureMeasuredLocked(doc: Document, index: Int) {
+        if (index in measured.indices && !measured[index]) {
+            pageInfos[index] = measurePageLocked(doc, index)
+            markMeasured(index)
+        }
     }
 
     private fun measurePageLocked(doc: Document, index: Int): PageInfo {
@@ -153,24 +164,17 @@ class MuPdfEngine(
     suspend fun ensurePageSize(index: Int): PageInfo? = withContext(dispatcher) {
         val doc = document ?: return@withContext null
         if (index !in pageInfos.indices) return@withContext null
-        if (!measured[index]) {
-            pageInfos[index] = measurePageLocked(doc, index)
-            measured[index] = true
-        }
+        ensureMeasuredLocked(doc, index)
         pageInfos[index]
     }
 
     suspend fun measureRemainingPages(): List<PageInfo> = withContext(dispatcher) {
         val doc = document ?: return@withContext pageInfos.toList()
-        for (i in pageInfos.indices) {
-            if (measured[i]) continue
-            pageInfos[i] = measurePageLocked(doc, i)
-            measured[i] = true
+        if (measuredCount < pageInfos.size) {
+            for (i in pageInfos.indices) ensureMeasuredLocked(doc, i)
         }
         pageInfos.toList()
     }
-
-    fun allPagesMeasured(): Boolean = measured.isNotEmpty() && measured.all { it }
 
     suspend fun render(
         index: Int,
@@ -181,25 +185,31 @@ class MuPdfEngine(
         originalColors: Boolean = false,
         imageAlpha: Float = 1f,
         urgent: Boolean = false,
+        rotateCw: Int = 0,
     ): Bitmap = withContext(dispatcher) {
         val doc = document ?: error("No document")
-        if (index in measured.indices && !measured[index]) {
-            pageInfos[index] = measurePageLocked(doc, index)
-            measured[index] = true
-        }
+        ensureMeasuredLocked(doc, index)
         val info = pageInfos.getOrNull(index) ?: error("No document")
-        var usedScale = targetWidth.coerceIn(1, 4096) / info.width
-        var width = (info.width * usedScale).toInt().coerceAtLeast(1)
-        var height = (info.height * usedScale).toInt().coerceAtLeast(1)
-        if (width.toLong() * height > 8_000_000L) {
-            usedScale *= kotlin.math.sqrt(8_000_000.0 / (width.toDouble() * height)).toFloat()
-            width = (info.width * usedScale).toInt().coerceAtLeast(1)
-            height = (info.height * usedScale).toInt().coerceAtLeast(1)
+        val extra = PageRotation.norm(rotateCw)
+        val display = PageRotation.display(info, extra)
+        var usedScale = targetWidth.coerceIn(1, 4096) / display.width.coerceAtLeast(1f)
+        val width = (info.width * usedScale).toInt().coerceAtLeast(1)
+        val height = (info.height * usedScale).toInt().coerceAtLeast(1)
+        if (width.toLong() * height > MAX_RENDER_PIXELS) {
+            usedScale *= kotlin.math.sqrt(MAX_RENDER_PIXELS.toDouble() / (width.toDouble() * height)).toFloat()
         }
-        renderLocked(
-            doc, index, info, usedScale, width, height,
-            fg, bg, imageBlend, originalColors, imageAlpha,
-        )
+        val bmp = renderLocked(doc, index, info, usedScale, fg, bg, imageBlend, originalColors, imageAlpha)
+        rotateBitmap(bmp, extra)
+    }
+
+    private fun rotateBitmap(src: Bitmap, rotateCw: Int): Bitmap {
+        val extra = PageRotation.norm(rotateCw)
+        if (extra == 0) return src
+        val matrix = android.graphics.Matrix()
+        matrix.postRotate(extra.toFloat())
+        val out = Bitmap.createBitmap(src, 0, 0, src.width, src.height, matrix, true)
+        if (out !== src && !src.isRecycled) src.recycle()
+        return out
     }
 
     private fun renderLocked(
@@ -207,8 +217,6 @@ class MuPdfEngine(
         index: Int,
         info: PageInfo,
         usedScale: Float,
-        width: Int,
-        height: Int,
         fg: Int,
         bg: Int,
         imageBlend: Float,
@@ -225,30 +233,27 @@ class MuPdfEngine(
             page.destroy()
         }
         try {
-            val bitmap = pixmapToBitmap(pixmap, width, height)
+            val w = pixmap.width.coerceAtLeast(1)
+            val h = pixmap.height.coerceAtLeast(1)
+            val pixels = pixmapToPixels(pixmap, w, h)
             if (!originalColors) {
                 val needImageRects = imageBlend > 0.001f || imageAlpha < 0.999f
-                val imageRects = if (!needImageRects) {
-                    emptyList()
-                } else {
+                val imageRects = if (needImageRects) {
                     contentLocked(index).imageRects.map { src ->
-                        RectF(
+                        PdfRect(
                             (src.left - info.x0) * usedScale,
                             (src.top - info.y0) * usedScale,
                             (src.right - info.x0) * usedScale,
-                            (src.bottom - info.y0) * usedScale
+                            (src.bottom - info.y0) * usedScale,
                         )
                     }
+                } else {
+                    emptyList()
                 }
-                ColorRemapper.remapInPlace(
-                    bitmap,
-                    fg,
-                    bg,
-                    imageBlend,
-                    imageRects,
-                    imageAlpha,
-                )
+                ColorRemapper.remap(pixels, w, h, fg, bg, imageBlend, imageRects, imageAlpha)
             }
+            val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+            bitmap.setPixels(pixels, 0, w, 0, 0, w, h)
             return bitmap
         } finally {
             pixmap.destroy()
@@ -257,10 +262,7 @@ class MuPdfEngine(
 
     suspend fun outline(): List<OutlineItem> = withContext(dispatcher) {
         val doc = document ?: return@withContext emptyList()
-        if (outlineCache.isEmpty()) {
-            outlineCache += flattenOutlineLocked(doc)
-        }
-        outlineCache.toList()
+        outlineCache ?: flattenOutlineLocked(doc).also { outlineCache = it }
     }
 
     suspend fun resolveUri(uri: String): Pair<Int, Float?>? = withContext(dispatcher) {
@@ -305,8 +307,7 @@ class MuPdfEngine(
 
     private fun pageFromUri(uri: String?): Int? {
         if (uri.isNullOrBlank()) return null
-        val match = Regex("(?:[#?&])page=(\\d+)", RegexOption.IGNORE_CASE).find(uri)
-            ?: Regex("^#(\\d+)$").find(uri)
+        val match = PAGE_PARAM.find(uri) ?: PAGE_FRAGMENT.find(uri)
         val n = match?.groupValues?.get(1)?.toIntOrNull() ?: return null
         return (n - 1).takeIf { it >= 0 }
     }
@@ -316,14 +317,14 @@ class MuPdfEngine(
         val doc = document ?: return PageContent(emptyList(), emptyList())
         val page = doc.loadPage(index)
         val chars = ArrayList<CharBox>()
-        val images = ArrayList<RectF>()
+        val images = ArrayList<PdfRect>()
         val links = ArrayList<PageLink>()
         try {
             page.getLinks()?.forEach { link ->
                 val b = link.bounds ?: return@forEach
                 val uri = link.uri ?: return@forEach
                 links += PageLink(
-                    bounds = RectF(
+                    bounds = PdfRect(
                         minOf(b.x0, b.x1),
                         minOf(b.y0, b.y1),
                         maxOf(b.x0, b.x1),
@@ -344,7 +345,7 @@ class MuPdfEngine(
             st.walk(object : StructuredTextWalker {
                 override fun onImageBlock(bbox: Rect?, transform: Matrix?, image: Image?) {
                     if (bbox != null) {
-                        images += RectF(bbox.x0, bbox.y0, bbox.x1, bbox.y1)
+                        images += PdfRect(bbox.x0, bbox.y0, bbox.x1, bbox.y1)
                     }
                 }
 
@@ -400,9 +401,10 @@ class MuPdfEngine(
 
     private fun closeLocked() {
         contentCache.clear()
-        outlineCache.clear()
+        outlineCache = null
         pageInfos.clear()
-        measured.clear()
+        measured = BooleanArray(0)
+        measuredCount = 0
         document?.destroy()
         document = null
         awaitingPassword = false
@@ -413,93 +415,86 @@ class MuPdfEngine(
         pfd = null
     }
 
-    private fun pixmapToBitmap(
-        pixmap: com.artifex.mupdf.fitz.Pixmap,
-        fallbackW: Int,
-        fallbackH: Int
-    ): Bitmap {
-        val w = pixmap.width.coerceAtLeast(1)
-        val h = pixmap.height.coerceAtLeast(1)
-        val n = pixmap.numberOfComponents
-        val alpha = pixmap.alpha
-        val stride = pixmap.stride
-        val samples = pixmap.samples
+    private fun pixmapToPixels(pixmap: Pixmap, w: Int, h: Int): IntArray {
         val pixels = IntArray(w * h)
-        if (samples != null && samples.isNotEmpty()) {
-            for (y in 0 until h) {
+        val samples = pixmap.samples
+        if (samples == null || samples.isEmpty()) {
+            pixels.fill(OPAQUE_WHITE)
+            return pixels
+        }
+        val n = pixmap.numberOfComponents
+        val stride = pixmap.stride
+        when {
+            n >= 4 && pixmap.alpha -> for (y in 0 until h) {
                 var src = y * stride
                 val row = y * w
                 for (x in 0 until w) {
-                    var r: Int
-                    var g: Int
-                    var b: Int
-                    var a = 255
-                    when {
-                        n >= 4 && alpha -> {
-                            r = samples[src].toInt() and 0xFF
-                            g = samples[src + 1].toInt() and 0xFF
-                            b = samples[src + 2].toInt() and 0xFF
-                            a = samples[src + 3].toInt() and 0xFF
-                            src += n
-                        }
-                        n >= 3 -> {
-                            r = samples[src].toInt() and 0xFF
-                            g = samples[src + 1].toInt() and 0xFF
-                            b = samples[src + 2].toInt() and 0xFF
-                            src += n
-                        }
-                        n == 2 && alpha -> {
-                            r = samples[src].toInt() and 0xFF
-                            g = r
-                            b = r
-                            a = samples[src + 1].toInt() and 0xFF
-                            src += 2
-                        }
-                        else -> {
-                            r = samples[src].toInt() and 0xFF
-                            g = r
-                            b = r
-                            src += n.coerceAtLeast(1)
-                        }
-                    }
+                    var r = samples[src].toInt() and 0xFF
+                    var g = samples[src + 1].toInt() and 0xFF
+                    var b = samples[src + 2].toInt() and 0xFF
+                    val a = samples[src + 3].toInt() and 0xFF
+                    src += n
                     if (a < 255) {
-                        val ia = 255 - a
-                        r = (r * a + 255 * ia) / 255
-                        g = (g * a + 255 * ia) / 255
-                        b = (b * a + 255 * ia) / 255
+                        r = overWhite(r, a)
+                        g = overWhite(g, a)
+                        b = overWhite(b, a)
                     }
-                    pixels[row + x] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+                    pixels[row + x] = OPAQUE or (r shl 16) or (g shl 8) or b
+                }
+            }
+            n >= 3 -> for (y in 0 until h) {
+                var src = y * stride
+                val row = y * w
+                for (x in 0 until w) {
+                    val r = samples[src].toInt() and 0xFF
+                    val g = samples[src + 1].toInt() and 0xFF
+                    val b = samples[src + 2].toInt() and 0xFF
+                    src += n
+                    pixels[row + x] = OPAQUE or (r shl 16) or (g shl 8) or b
+                }
+            }
+            n == 2 && pixmap.alpha -> for (y in 0 until h) {
+                var src = y * stride
+                val row = y * w
+                for (x in 0 until w) {
+                    var v = samples[src].toInt() and 0xFF
+                    val a = samples[src + 1].toInt() and 0xFF
+                    src += 2
+                    if (a < 255) v = overWhite(v, a)
+                    pixels[row + x] = OPAQUE or (v shl 16) or (v shl 8) or v
+                }
+            }
+            else -> {
+                val step = n.coerceAtLeast(1)
+                for (y in 0 until h) {
+                    var src = y * stride
+                    val row = y * w
+                    for (x in 0 until w) {
+                        val v = samples[src].toInt() and 0xFF
+                        src += step
+                        pixels[row + x] = OPAQUE or (v shl 16) or (v shl 8) or v
+                    }
                 }
             }
         }
-        val bitmap = Bitmap.createBitmap(
-            if (w > 0) w else fallbackW,
-            if (h > 0) h else fallbackH,
-            Bitmap.Config.ARGB_8888
-        )
-        bitmap.setPixels(pixels, 0, w, 0, 0, w, h)
-        return bitmap
+        return pixels
     }
 
-    private class PfdSeekableStream(
-        private val pfd: ParcelFileDescriptor
-    ) : SeekableInputStream {
-        override fun read(b: ByteArray): Int {
-            val n = Os.read(pfd.fileDescriptor, b, 0, b.size)
-            return if (n == 0) -1 else n
-        }
+    private fun overWhite(c: Int, a: Int): Int = (c * a + 255 * (255 - a)) / 255
 
-        override fun position(): Long =
-            Os.lseek(pfd.fileDescriptor, 0, OsConstants.SEEK_CUR)
+    companion object {
+        private const val REFLOW_WIDTH = 450f
+        private const val REFLOW_HEIGHT = 600f
+        private const val MAX_RENDER_PIXELS = 8_000_000L
+        private const val OPAQUE = 0xFF shl 24
+        private val OPAQUE_WHITE = 0xFFFFFFFF.toInt()
+        private val PAGE_PARAM = Regex("(?:[#?&])page=(\\d+)", RegexOption.IGNORE_CASE)
+        private val PAGE_FRAGMENT = Regex("^#(\\d+)$")
 
-        override fun seek(offset: Long, whence: Int): Long {
-            val osWhence = when (whence) {
-                SeekableStream.SEEK_SET -> OsConstants.SEEK_SET
-                SeekableStream.SEEK_CUR -> OsConstants.SEEK_CUR
-                SeekableStream.SEEK_END -> OsConstants.SEEK_END
-                else -> OsConstants.SEEK_SET
-            }
-            return Os.lseek(pfd.fileDescriptor, offset, osWhence)
+        fun layoutEm(fontScale: Float): Float = 12f * fontScale.coerceIn(0.7f, 1.4f)
+
+        internal fun layoutReflowable(doc: Document, fontScale: Float) {
+            if (doc.isReflowable) doc.layout(REFLOW_WIDTH, REFLOW_HEIGHT, layoutEm(fontScale))
         }
     }
 }

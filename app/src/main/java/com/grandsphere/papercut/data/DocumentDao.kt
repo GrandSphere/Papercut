@@ -27,6 +27,12 @@ interface DocumentDao {
     @Update
     suspend fun update(doc: PdfDocument)
 
+    @Query(
+        "UPDATE documents SET lastPageIndex = :page, lastScrollXPdf = :scrollX, " +
+            "lastScrollYPdf = :scrollY WHERE uri = :uri",
+    )
+    suspend fun updatePosition(uri: String, page: Int, scrollX: Float, scrollY: Float): Int
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(doc: PdfDocument)
 

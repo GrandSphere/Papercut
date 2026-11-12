@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<remote-actions version="1.2">
+    <action
+        id="pen_button"
+        label="@string/air_action_pen_press"
+        priority="1"
+        trigger_key="F10"
+        repeatable="true"
+        repeatable_interval="short">
+        <preference name="gesture" value="click" />
+        <preference name="button_only" value="true" />
+    </action>
+    <action
+        id="pen_button_double"
+        label="@string/air_action_pen_double"
+        priority="2"
+        trigger_key="F11">
+        <preference name="gesture" value="double_click" />
+        <preference name="button_only" value="true" />
+    </action>
+</remote-actions>

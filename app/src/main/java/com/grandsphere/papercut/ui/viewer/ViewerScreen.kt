@@ -5,7 +5,6 @@ import android.view.MotionEvent
 import android.view.ViewConfiguration
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -42,23 +41,6 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
-import androidx.compose.material.icons.outlined.Bookmark
-import androidx.compose.material.icons.outlined.CheckBoxOutlineBlank
-import androidx.compose.material.icons.outlined.ContentCopy
-import androidx.compose.material.icons.outlined.Menu
-import androidx.compose.material.icons.outlined.Palette
-import androidx.compose.material.icons.outlined.Reorder
-import androidx.compose.material.icons.outlined.Save
-import androidx.compose.material.icons.outlined.Search
-import androidx.compose.material.icons.outlined.SelectAll
-import androidx.compose.material.icons.outlined.Share
-import androidx.compose.material.icons.outlined.SwapHoriz
-import androidx.compose.material.icons.outlined.WidthFull
-import androidx.compose.material.icons.outlined.ZoomIn
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -83,13 +65,11 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
@@ -115,8 +95,13 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import com.grandsphere.papercut.ui.chrome.PapercutAlertDialog
+import com.grandsphere.papercut.ui.chrome.SymbolIcon
 import com.grandsphere.papercut.ui.chrome.PapercutOverlay
+import com.grandsphere.papercut.ui.chrome.PapercutSwitch
+import com.grandsphere.papercut.ui.chrome.SettingsSwitchRow
 import com.grandsphere.papercut.ui.chrome.ThinGreySlider
+import androidx.compose.ui.res.painterResource
+import com.grandsphere.papercut.R
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -139,7 +124,13 @@ fun ViewerScreen(
     onGoToPageIndex: (Int, Float?) -> Unit,
     onScrubbing: (Boolean) -> Unit,
     onFitWidth: () -> Unit,
+    onFitHeight: () -> Unit,
     onZoomPercent: (Float) -> Unit,
+    onRotatePage: () -> Unit,
+    onRotateDocument: () -> Unit,
+    onQuickJump: () -> Unit,
+    presenting: Boolean,
+    onPresenter: (Boolean) -> Unit,
     onLockZoom: (Boolean) -> Unit,
     onLockSide: (Boolean) -> Unit,
     onOriginalColors: (Boolean) -> Unit,
@@ -159,12 +150,13 @@ fun ViewerScreen(
     pageLoading: Boolean = false,
     startupReady: Boolean = true,
     overlayReset: Int = 0,
+    openBookmarksTick: Int = 0,
     onEnterFolio: () -> Unit,
     onLeaveFolio: () -> Unit,
     onAddToFolio: () -> Unit,
     onFolioIndex: (Int) -> Unit,
     onSaveFolio: () -> Unit,
-    onShareFull: () -> Unit,
+    onShareFull: (Boolean) -> Unit,
     onSharePartial: () -> Unit,
     onCombine: () -> Unit,
     onManageFolio: () -> Unit,
@@ -173,7 +165,7 @@ fun ViewerScreen(
     onTogglePage: (Int) -> Unit,
     onSetSelectedPages: (List<Int>) -> Unit,
     onExitPageSelect: () -> Unit,
-    onShareSelectedPages: () -> Unit,
+    onShareSelectedPages: (Boolean) -> Unit,
     passwordNeeded: Boolean,
     passwordWrong: Boolean,
     onSubmitPassword: (String) -> Unit,
@@ -199,6 +191,7 @@ fun ViewerScreen(
     var pageCount by remember { mutableIntStateOf(0) }
     var chromeOpen by remember { mutableStateOf(false) }
     var shareOpen by remember { mutableStateOf(false) }
+    var keepRotation by remember { mutableStateOf(true) }
     var showPageScrubber by remember { mutableStateOf(false) }
     var tocOpen by remember { mutableStateOf(false) }
     var zoomOpen by remember { mutableStateOf(false) }
@@ -279,6 +272,10 @@ fun ViewerScreen(
         if (!hasDocument) drawerState.open()
     }
 
+    LaunchedEffect(openBookmarksTick) {
+        if (openBookmarksTick > 0) bookmarksOpen = true
+    }
+
     LaunchedEffect(overlayReset) {
         if (overlayReset <= 0) return@LaunchedEffect
         findOpen = false
@@ -305,8 +302,10 @@ fun ViewerScreen(
         }
     }
 
+    var drawerGestures by remember { mutableStateOf(true) }
     ModalNavigationDrawer(
         drawerState = drawerState,
+        gesturesEnabled = drawerGestures,
         drawerContent = {
             ModalDrawerSheet(
                 drawerContainerColor = MaterialTheme.colorScheme.background,
@@ -383,6 +382,14 @@ fun ViewerScreen(
                             onCombine()
                         }
                     }
+                    DrawerItem("Rotate page", enabled = hasDocument) {
+                        scope.launch { drawerState.close() }
+                        onRotatePage()
+                    }
+                    DrawerItem("Rotate document", enabled = hasDocument) {
+                        scope.launch { drawerState.close() }
+                        onRotateDocument()
+                    }
                     DrawerItem("Menu") {
                         scope.launch { drawerState.close() }
                         chromeOpen = !chromeOpen
@@ -427,12 +434,13 @@ fun ViewerScreen(
                                     currentPage = if (count == 0) 1 else index + 1
                                     pageCount = count
                                 },
-                                onDoubleTap = {
+                                openMenu = {
                                     if (SystemClock.uptimeMillis() > suppressMenuUntil.longValue) {
                                         chromeOpen = true
                                     }
                                 },
                                 onPagePress = onTogglePage,
+                                onDrawerGestures = { on -> drawerGestures = on },
                             )
                         }
                     },
@@ -477,11 +485,13 @@ fun ViewerScreen(
                 )
             }
             if (!hasDocument && !pageLoading && !inFolio) {
-                Text(
-                    "Papercut",
-                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
-                    fontSize = 28.sp,
-                    modifier = Modifier.align(Alignment.Center),
+                Icon(
+                    painter = painterResource(R.drawable.ic_papercut_logo),
+                    contentDescription = "Papercut",
+                    tint = Color(settings.appFontColor),
+                    modifier = Modifier
+                        .align(Alignment.Center)
+                        .size(96.dp),
                 )
             }
             if (pageSelectMode) {
@@ -491,7 +501,14 @@ fun ViewerScreen(
                     modifier = Modifier.align(Alignment.TopCenter),
                 ) {
                     ChromeIcon(
-                        Icons.Outlined.Reorder,
+                        "rotate_90_degrees_cw",
+                        hint = "Rotate",
+                        enabled = hasDocument,
+                        onHint = ::hint,
+                        onClick = onRotatePage,
+                    )
+                    ChromeIcon(
+                        "reorder",
                         hint = "Rearrange",
                         enabled = selectedPages.isNotEmpty(),
                         onHint = ::hint,
@@ -499,7 +516,7 @@ fun ViewerScreen(
                     )
                     val allSelected = pages.isNotEmpty() && selectedPages.size == pages.size
                     ChromeIcon(
-                        if (allSelected) Icons.Outlined.CheckBoxOutlineBlank else Icons.Outlined.SelectAll,
+                        if (allSelected) "check_box_outline_blank" else "select_all",
                         hint = if (allSelected) "Deselect all" else "Select all",
                         enabled = pages.isNotEmpty(),
                         onHint = ::hint,
@@ -510,11 +527,11 @@ fun ViewerScreen(
                         },
                     )
                     ChromeIcon(
-                        Icons.Outlined.Share,
+                        "share",
                         hint = "Share",
                         enabled = selectedPages.isNotEmpty(),
                         onHint = ::hint,
-                        onClick = onShareSelectedPages,
+                        onClick = { onShareSelectedPages(keepRotation) },
                     )
                 }
             } else if (!selection.isNullOrEmpty()) {
@@ -527,13 +544,13 @@ fun ViewerScreen(
                     modifier = Modifier.align(Alignment.TopCenter),
                 ) {
                     ChromeIcon(
-                        Icons.Outlined.Share,
+                        "share",
                         hint = "Share",
                         onHint = ::hint,
                         onClick = onShare,
                     )
                     ChromeIcon(
-                        Icons.Outlined.ContentCopy,
+                        "content_copy",
                         hint = "Copy",
                         onHint = ::hint,
                         onClick = onCopy,
@@ -563,7 +580,7 @@ fun ViewerScreen(
                 ) {
                     Box(Modifier.fillMaxWidth()) {
                         ChromeIcon(
-                            Icons.Outlined.Menu,
+                            "menu",
                             hint = "Menu",
                             onHint = ::hint,
                             onClick = { scope.launch { drawerState.open() } },
@@ -574,7 +591,7 @@ fun ViewerScreen(
                             horizontalArrangement = Arrangement.Center,
                         ) {
                             ChromeIcon(
-                                Icons.Outlined.Palette,
+                                if (settings.originalColors) "invert_colors_off" else "invert_colors",
                                 hint = if (settings.originalColors) "Themed colours" else "Original colours",
                                 selected = !settings.originalColors,
                                 onHint = ::hint,
@@ -591,10 +608,11 @@ fun ViewerScreen(
                                 contentAlignment = Alignment.Center,
                             ) {
                                 Text(
-                                    if (zoomMode == ZoomMode.FIT_WIDTH) {
-                                        "Width"
-                                    } else {
-                                        "${currentZoomPercent.roundToInt()}%"
+                                    when {
+                                        presenting -> "Page"
+                                        zoomMode == ZoomMode.FIT_WIDTH -> "Width"
+                                        zoomMode == ZoomMode.FIT_HEIGHT -> "Height"
+                                        else -> "${currentZoomPercent.roundToInt()}%"
                                     },
                                     color = MaterialTheme.colorScheme.onBackground.copy(
                                         alpha = if (hasDocument) 0.85f else 0.35f,
@@ -606,7 +624,7 @@ fun ViewerScreen(
                                 )
                             }
                             ChromeIcon(
-                                Icons.Outlined.Search,
+                                "search",
                                 hint = "Find",
                                 enabled = hasDocument,
                                 onHint = ::hint,
@@ -618,7 +636,7 @@ fun ViewerScreen(
                         }
                         if (inFolio) {
                             ChromeIcon(
-                                Icons.Outlined.Save,
+                                "save",
                                 hint = "Save",
                                 enabled = hasDocument,
                                 onHint = ::hint,
@@ -659,7 +677,7 @@ fun ViewerScreen(
                 ) {
                     Row(horizontalArrangement = Arrangement.Center) {
                         ChromeIcon(
-                            Icons.Outlined.SwapHoriz,
+                            "swap_horiz",
                             hint = "Lock side scrolling",
                             selected = settings.lockSideScroll,
                             struck = settings.lockSideScroll,
@@ -667,7 +685,7 @@ fun ViewerScreen(
                             onClick = { onLockSide(!settings.lockSideScroll) },
                         )
                         ChromeIcon(
-                            Icons.Outlined.ZoomIn,
+                            "zoom_in",
                             hint = "Lock zoom",
                             selected = settings.lockZoom,
                             struck = settings.lockZoom,
@@ -675,19 +693,32 @@ fun ViewerScreen(
                             onClick = { onLockZoom(!settings.lockZoom) },
                         )
                         ChromeIcon(
-                            Icons.Outlined.WidthFull,
+                            "width_full",
                             hint = "Fit width",
+                            longHint = "Fit height",
                             enabled = hasDocument,
                             onHint = ::hint,
                             onClick = onFitWidth,
+                            onLongClick = onFitHeight,
                         )
                         ChromeIcon(
-                            Icons.Outlined.Bookmark,
+                            "bookmark_border",
                             hint = "Bookmarks",
+                            longHint = if (settings.quickJumpEnabled) "Quick jump" else null,
                             enabled = hasDocument,
                             onHint = ::hint,
                             onClick = { bookmarksOpen = true },
+                            onLongClick = if (settings.quickJumpEnabled) onQuickJump else null,
                         )
+                        if (settings.quickJumpEnabled && settings.showJumpOnMenubar) {
+                            ChromeIcon(
+                                "swap_vert",
+                                hint = "Quick jump",
+                                enabled = hasDocument,
+                                onHint = ::hint,
+                                onClick = onQuickJump,
+                            )
+                        }
                     }
                     if (inFolio) {
                         val count = folioItems.size
@@ -776,13 +807,13 @@ fun ViewerScreen(
                                     onClick = { onQuery(query) },
                                     modifier = Modifier.size(40.dp),
                                 ) {
-                                    Icon(
-                                        Icons.Outlined.Search,
+                                    SymbolIcon(
+                                        "search",
                                         contentDescription = "Search",
                                         tint = MaterialTheme.colorScheme.onBackground.copy(
                                             alpha = if (query.isBlank()) 0.4f else 0.9f
                                         ),
-                                        modifier = Modifier.size(20.dp),
+                                        size = 20.dp,
                                     )
                                 }
                             }
@@ -804,9 +835,9 @@ fun ViewerScreen(
                                 enabled = hitCount > 0,
                                 modifier = Modifier.size(36.dp),
                             ) {
-                                Icon(
-                                    Icons.AutoMirrored.Filled.KeyboardArrowLeft,
-                                    contentDescription = null,
+                                SymbolIcon(
+                                    "keyboard_arrow_left",
+                                    contentDescription = "Previous",
                                     tint = MaterialTheme.colorScheme.onBackground,
                                 )
                             }
@@ -815,9 +846,9 @@ fun ViewerScreen(
                                 enabled = hitCount > 0,
                                 modifier = Modifier.size(36.dp),
                             ) {
-                                Icon(
-                                    Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                                    contentDescription = null,
+                                SymbolIcon(
+                                    "keyboard_arrow_right",
+                                    contentDescription = "Next",
                                     tint = MaterialTheme.colorScheme.onBackground,
                                 )
                             }
@@ -936,23 +967,79 @@ fun ViewerScreen(
 
     if (zoomOpen) {
         var text by remember { mutableStateOf(currentZoomPercent.roundToInt().toString()) }
+        var draft by remember {
+            mutableStateOf(
+                when {
+                    presenting -> ZoomDraft.PRESENTER
+                    zoomMode == ZoomMode.FIT_WIDTH -> ZoomDraft.WIDTH
+                    zoomMode == ZoomMode.FIT_HEIGHT -> ZoomDraft.HEIGHT
+                    else -> ZoomDraft.CUSTOM
+                },
+            )
+        }
         PapercutAlertDialog(
             onDismissRequest = { zoomOpen = false },
             title = { Text("Zoom") },
             text = {
-                OutlinedTextField(
-                    value = text,
-                    onValueChange = { text = it.filter { ch -> ch.isDigit() }.take(4) },
-                    label = { Text("%") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                )
+                Column {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        OutlinedTextField(
+                            value = text,
+                            onValueChange = {
+                                text = it.filter { ch -> ch.isDigit() }.take(4)
+                                draft = ZoomDraft.CUSTOM
+                            },
+                            label = { Text("%") },
+                            enabled = draft != ZoomDraft.PRESENTER,
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier.weight(1f),
+                        )
+                        Box(Modifier.padding(start = 8.dp)) {
+                            PapercutSwitch(
+                                checked = draft == ZoomDraft.CUSTOM,
+                                onChecked = { on -> if (on) draft = ZoomDraft.CUSTOM },
+                                enabled = hasDocument,
+                            )
+                        }
+                    }
+                    SettingsSwitchRow(
+                        label = "Fit width",
+                        checked = draft == ZoomDraft.WIDTH,
+                        onChecked = { on -> if (on) draft = ZoomDraft.WIDTH },
+                    )
+                    SettingsSwitchRow(
+                        label = "Fit height",
+                        checked = draft == ZoomDraft.HEIGHT,
+                        onChecked = { on -> if (on) draft = ZoomDraft.HEIGHT },
+                    )
+                    SettingsSwitchRow(
+                        label = "Presenter Mode",
+                        checked = draft == ZoomDraft.PRESENTER,
+                        enabled = hasDocument,
+                        onChecked = { on -> if (on) draft = ZoomDraft.PRESENTER },
+                    )
+                }
             },
             confirmButton = {
                 TextButton(
                     onClick = {
-                        val percent = text.toFloatOrNull()?.coerceIn(25f, 400f)
-                        if (percent != null) onZoomPercent(percent)
+                        when (draft) {
+                            ZoomDraft.WIDTH -> {
+                                if (presenting) onPresenter(false)
+                                onFitWidth()
+                            }
+                            ZoomDraft.HEIGHT -> {
+                                if (presenting) onPresenter(false)
+                                onFitHeight()
+                            }
+                            ZoomDraft.PRESENTER -> onPresenter(true)
+                            ZoomDraft.CUSTOM -> {
+                                if (presenting) onPresenter(false)
+                                val percent = text.toFloatOrNull()?.coerceIn(25f, 400f)
+                                if (percent != null) onZoomPercent(percent)
+                            }
+                        }
                         zoomOpen = false
                     },
                 ) { Text("OK") }
@@ -1003,7 +1090,7 @@ fun ViewerScreen(
                     TextButton(
                         onClick = {
                             shareOpen = false
-                            onShareFull()
+                            onShareFull(keepRotation)
                         },
                         modifier = Modifier.fillMaxWidth(),
                         contentPadding = PaddingValues(horizontal = 0.dp),
@@ -1021,6 +1108,12 @@ fun ViewerScreen(
                     ) {
                         Text("Partial", modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Start)
                     }
+                    HorizontalDivider(Modifier.padding(vertical = 8.dp))
+                    SettingsSwitchRow(
+                        label = "Keep rotation",
+                        checked = keepRotation,
+                        onChecked = { on -> keepRotation = on },
+                    )
                 }
             },
             confirmButton = {},
@@ -1093,8 +1186,8 @@ private fun ModeTopBar(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         IconButton(onClick = onBack) {
-            Icon(
-                Icons.AutoMirrored.Filled.ArrowBack,
+            SymbolIcon(
+                "arrow_back",
                 contentDescription = "Back",
                 tint = MaterialTheme.colorScheme.onBackground,
             )
@@ -1129,13 +1222,15 @@ private fun DrawerItem(label: String, enabled: Boolean = true, onClick: () -> Un
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ChromeIcon(
-    icon: ImageVector,
+    icon: String,
     hint: String,
     enabled: Boolean = true,
     selected: Boolean = false,
     struck: Boolean = false,
     onHint: (String) -> Unit,
     onClick: () -> Unit,
+    onLongClick: (() -> Unit)? = null,
+    longHint: String? = null,
     modifier: Modifier = Modifier,
 ) {
     val tint = MaterialTheme.colorScheme.onBackground.copy(
@@ -1151,23 +1246,18 @@ private fun ChromeIcon(
             .combinedClickable(
                 enabled = enabled,
                 onClick = onClick,
-                onLongClick = { onHint(hint) },
+                onLongClick = {
+                    if (onLongClick != null) {
+                        onLongClick()
+                        longHint?.let(onHint)
+                    } else {
+                        onHint(hint)
+                    }
+                },
             ),
         contentAlignment = Alignment.Center,
     ) {
-        Icon(icon, contentDescription = hint, tint = tint)
-        if (struck) {
-            Canvas(Modifier.size(22.dp)) {
-                val stroke = 2.dp.toPx()
-                drawLine(
-                    color = tint,
-                    start = Offset(stroke, size.height - stroke),
-                    end = Offset(size.width - stroke, stroke),
-                    strokeWidth = stroke,
-                    cap = StrokeCap.Round,
-                )
-            }
-        }
+        SymbolIcon(icon, contentDescription = hint, tint = tint, struck = struck)
     }
 }
 
@@ -1237,15 +1327,16 @@ private fun wrapCallbacks(
     existing: PdfStripView.Callbacks?,
     onSel: (String?) -> Unit,
     onPage: (Int, Int) -> Unit,
-    onDoubleTap: () -> Unit,
+    openMenu: () -> Unit,
     onPagePress: (Int) -> Unit = {},
+    onDrawerGestures: (Boolean) -> Unit = {},
 ): PdfStripView.Callbacks {
     return object : PdfStripView.Callbacks {
         override fun requestPage(index: Int, width: Int, urgent: Boolean) {
             existing?.requestPage(index, width, urgent)
         }
 
-        override fun cancelRendersExcept(keep: Set<Int>) {
+        override fun cancelRendersExcept(keep: IntRange) {
             existing?.cancelRendersExcept(keep)
         }
 
@@ -1272,7 +1363,8 @@ private fun wrapCallbacks(
         }
 
         override fun onDoubleTap() {
-            onDoubleTap()
+            existing?.onDoubleTap()
+            openMenu()
         }
 
         override fun onTapZoom(mode: ZoomMode, percent: Float) {
@@ -1298,5 +1390,24 @@ private fun wrapCallbacks(
         override fun onFolioSwipe(delta: Int) {
             existing?.onFolioSwipe(delta)
         }
+
+        override fun onUserPan() {
+            existing?.onUserPan()
+        }
+
+        override fun onNonScrollNavigation() {
+            existing?.onNonScrollNavigation()
+        }
+
+        override fun onPenAction(action: com.grandsphere.papercut.data.PenButtonAction) {
+            existing?.onPenAction(action)
+        }
+
+        override fun onDrawerGesturesEnabled(enabled: Boolean) {
+            existing?.onDrawerGesturesEnabled(enabled)
+            onDrawerGestures(enabled)
+        }
     }
 }
+
+private enum class ZoomDraft { WIDTH, HEIGHT, PRESENTER, CUSTOM }

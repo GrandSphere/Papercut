@@ -9,33 +9,48 @@ data class SearchHit(
 )
 
 object TextFinder {
+    private val WHITESPACE = Regex("\\s+")
+
     fun find(pages: List<List<CharBox>>, query: String): List<SearchHit> {
-        val tokens = query.trim().split(Regex("\\s+")).filter { it.isNotEmpty() }
+        val tokens = query.trim().split(WHITESPACE).filter { it.isNotEmpty() }
         if (tokens.isEmpty() || pages.isEmpty()) return emptyList()
         val pattern = tokens.joinToString("[^\\s]*\\s?[^\\s]*") { Regex.escape(it) }
             .toRegex(setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
 
-        val map = ArrayList<Pair<Int, Int>>()
-        val sb = StringBuilder()
+        var total = pages.size - 1
+        for (chars in pages) total += chars.size
+        if (total <= 0) return emptyList()
+
+        val pageOf = IntArray(total)
+        val indexOf = IntArray(total)
+        val sb = StringBuilder(total)
+        var pos = 0
         pages.forEachIndexed { page, chars ->
             if (page > 0) {
                 sb.append('\n')
-                map.add(-1 to -1)
+                pageOf[pos] = -1
+                pos++
             }
-            chars.forEachIndexed { i, box ->
-                sb.append(box.c)
-                map.add(page to i)
+            for (i in chars.indices) {
+                sb.append(chars[i].c)
+                pageOf[pos] = page
+                indexOf[pos] = i
+                pos++
             }
         }
         val text = sb.toString()
-        if (text.isEmpty()) return emptyList()
         return pattern.findAll(text).mapNotNull { match ->
             val range = match.range
-            val start = range.firstOrNull { it in map.indices && map[it].first >= 0 } ?: return@mapNotNull null
-            val end = range.lastOrNull { it in map.indices && map[it].first >= 0 } ?: return@mapNotNull null
-            val (sp, si) = map[start]
-            val (ep, ei) = map[end]
-            SearchHit(sp, si, ep, ei, wordSnippet(text, start, end))
+            var start = range.first
+            while (start <= range.last && pageOf[start] < 0) start++
+            if (start > range.last) return@mapNotNull null
+            var end = range.last
+            while (end > start && pageOf[end] < 0) end--
+            SearchHit(
+                pageOf[start], indexOf[start],
+                pageOf[end], indexOf[end],
+                wordSnippet(text, start, end),
+            )
         }.toList()
     }
 

@@ -8,13 +8,16 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PointF
 import android.graphics.RectF
+import android.os.SystemClock
 import android.util.AttributeSet
 import android.view.GestureDetector
+import android.view.InputDevice
+import android.view.KeyEvent
 import android.view.MotionEvent
-import android.view.ScaleGestureDetector
 import android.view.View
 import android.view.ViewConfiguration
 import android.widget.OverScroller
+import com.grandsphere.papercut.data.PenButtonAction
 import com.grandsphere.papercut.data.ViewerSettings
 import com.grandsphere.papercut.data.ZoomMode
 import com.grandsphere.papercut.pdf.CharBox
@@ -33,26 +36,30 @@ class PdfStripView @JvmOverloads constructor(
 ) : View(context, attrs) {
 
     interface Callbacks {
-        fun requestPage(index: Int, width: Int, urgent: Boolean = false)
-        fun cancelRendersExcept(keep: Set<Int>) {}
-        fun loadText(index: Int, done: (List<CharBox>) -> Unit)
-        fun requestLinks(index: Int)
-        fun onPinchEnd(percent: Float)
-        fun onSelectionText(text: String?)
-        fun onVisiblePage(index: Int, count: Int)
-        fun onDoubleTap()
-        fun onTapZoom(mode: ZoomMode, percent: Float)
-        fun onLockSideScroll(on: Boolean)
-        fun onLinkTapped(uri: String, isExternal: Boolean)
+        fun requestPage(index: Int, width: Int, urgent: Boolean = false) {}
+        fun cancelRendersExcept(keep: IntRange) {}
+        fun loadText(index: Int, done: (List<CharBox>) -> Unit) {}
+        fun requestLinks(index: Int) {}
+        fun onPinchEnd(percent: Float) {}
+        fun onSelectionText(text: String?) {}
+        fun onVisiblePage(index: Int, count: Int) {}
+        fun onDoubleTap() {}
+        fun onTapZoom(mode: ZoomMode, percent: Float) {}
+        fun onLockSideScroll(on: Boolean) {}
+        fun onLinkTapped(uri: String, isExternal: Boolean) {}
         fun onPageLongPressed(index: Int) {}
         fun onPageTapped(index: Int) {}
         fun onFolioSwipe(delta: Int) {}
+        fun onUserPan() {}
+        fun onNonScrollNavigation() {}
+        fun onPenAction(action: PenButtonAction) {}
+        fun onDrawerGesturesEnabled(enabled: Boolean) {}
+
+        object None : Callbacks
     }
 
     var callbacks: Callbacks? = null
-    var onPagePainted: ((Int) -> Unit)? = null
     var folioPaging: Boolean = false
-    private var boundUri: String? = null
     var pageSelectMode: Boolean = false
         private set
     private var selectedPages: Collection<Int> = emptySet()
@@ -67,8 +74,7 @@ class PdfStripView @JvmOverloads constructor(
     private var scrollYPdf = 0f
     var zoomMode: ZoomMode = ZoomMode.FIT_WIDTH
         private set
-    var customPercent: Float = 100f
-        private set
+    private var customPercent: Float = 100f
 
     private var bgColor: Int = ViewerSettings.DEFAULT_BG
     private var highlightColor: Int = ViewerSettings.DEFAULT_HIGHLIGHT
@@ -95,6 +101,49 @@ class PdfStripView @JvmOverloads constructor(
     private var folioDownY = 0f
     private var folioSwiped = false
     private val touchSlopPx = ViewConfiguration.get(context).scaledTouchSlop.toFloat()
+    private val folioSwipeSlopPx = 96f * resources.displayMetrics.density
+    private var penModeEnabled = false
+    private var penIgnoresScrollLock = false
+    private var penTapAction = PenButtonAction.DEFAULT_INTERACTION
+    private var penScreenDoubleAction = PenButtonAction.DO_NOTHING
+    private var penScreenHoldAction = PenButtonAction.DO_NOTHING
+    private var penPressAction = PenButtonAction.OPEN_BOOKMARKS
+    private var penHoldAction = PenButtonAction.ADD_QUICK_BOOKMARK
+    private var airPressAction = PenButtonAction.OPEN_BOOKMARKS
+    private var airHoldAction = PenButtonAction.ADD_QUICK_BOOKMARK
+    private var penDoubleAction = PenButtonAction.OPEN_BOOKMARKS
+    private var airDoubleAction = PenButtonAction.OPEN_BOOKMARKS
+    private var penDoubleTapPeriodMs = ViewerSettings.DEFAULT_PEN_DOUBLE_TAP_MS
+    private var penHoldPeriodMs = ViewerSettings.DEFAULT_PEN_HOLD_MS
+    private var lastStylusX = 0f
+    private var lastStylusY = 0f
+    private var presenting = false
+    private var presenterPan = 0f
+    private var stylusPressActive = false
+    private var stylusHoldPosted = false
+    private var stylusHoldFired = false
+    private var stylusIgnoreStickyUntilZero = false
+    private var lastDigitizerButtonAt = 0L
+    private var lastStylusHoverAt = 0L
+    private var pendingPenPress = false
+    private val pendingPenPressRunnable = Runnable {
+        pendingPenPress = false
+        firePenAction(false)
+    }
+    private val stylusHoldRunnable = Runnable {
+        if (!stylusPressActive || stylusHoldFired) return@Runnable
+        stylusHoldFired = true
+        cancelPendingPenPress()
+        firePenAction(true)
+    }
+    private var airButtonDown = false
+    private var airHoldPosted = false
+    private var airHoldFired = false
+    private val airHoldRunnable = Runnable {
+        if (!airButtonDown || airHoldFired) return@Runnable
+        airHoldFired = true
+        fireAirAction(true)
+    }
     private var pendingZoom = false
     private var pendingZoomX = 0f
     private var pendingZoomY = 0f
@@ -110,8 +159,8 @@ class PdfStripView @JvmOverloads constructor(
     private var fitWidthLockHeld: Boolean = false
     private var searchHits: List<SearchHit> = emptyList()
     private var searchIndex: Int = 0
+    private var searchByPage: Map<Int, List<Int>> = emptyMap()
     private var pendingRestoreX: Float? = null
-    private var pendingRestoreY: Float? = null
     private var pendingRestorePage: Int? = null
     private var pendingRestoreOffset: Float? = null
 
@@ -122,7 +171,6 @@ class PdfStripView @JvmOverloads constructor(
     private val linksInFlight = HashSet<Int>()
 
     private val scroller = OverScroller(context)
-    private val scaleDetector = ScaleGestureDetector(context, ScaleListener())
     private val gestureDetector = GestureDetector(context, GestureListener())
 
     private val bitmapPaint = Paint(Paint.FILTER_BITMAP_FLAG)
@@ -155,7 +203,6 @@ class PdfStripView @JvmOverloads constructor(
 
     private val handleRadius = 10f * resources.displayMetrics.density
     private val edgeSlop = 24f * resources.displayMetrics.density
-    private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
 
     private var selecting = false
     private var draggingHandle: Handle? = null
@@ -169,7 +216,11 @@ class PdfStripView @JvmOverloads constructor(
 
     private enum class Handle { START, END }
 
-    private data class CachedPage(val width: Int, val key: Long, val bitmap: Bitmap)
+    private class CachedPage(val width: Int, val key: Long, val bitmap: Bitmap) {
+        val bytes: Long = bitmap.byteCount.toLong()
+    }
+
+    private var cachedBytes = 0L
 
     private data class TapZoomSnapshot(
         val mode: ZoomMode,
@@ -188,53 +239,16 @@ class PdfStripView @JvmOverloads constructor(
         val endIndex: Int
     )
 
-    fun bindFolioItem(
-        uri: String,
-        newPages: List<PageInfo>,
-        settings: ViewerSettings,
-        scrollX: Float,
-        scrollY: Float,
-    ) {
-        if (uri.isBlank()) {
-            bindDocument("", emptyList())
-            return
-        }
-        if (boundUri == uri && pages.isNotEmpty() && newPages.isNotEmpty()) {
-            pendingRestoreX = null
-            pendingRestoreY = null
-            return
-        }
-        pendingRestoreX = scrollX
-        pendingRestoreY = scrollY
-        setSettings(settings)
-        bindDocument(uri, newPages)
-        if (pages.isNotEmpty() && width > 0 && hasPendingRestore()) {
-            applyPendingRestore(consume = true)
-        }
-    }
-
-    fun primeVisiblePages() {
-        if (pages.isEmpty() || width <= 0 || height <= 0 || scale <= 0f) return
-        requestPagesAround(currentVisiblePage())
-    }
-
-    fun bindDocument(uri: String, newPages: List<PageInfo>): Boolean {
-        if (uri.isBlank() || newPages.isEmpty()) {
-            boundUri = null
-            setDocument(emptyList())
-            return true
-        }
-        if (boundUri == uri && pages.size == newPages.size) {
-            return false
-        }
-        boundUri = uri
-        setDocument(newPages)
-        return true
-    }
-
-    fun replacePageSizes(newPages: List<PageInfo>) {
+    fun replacePageSizes(newPages: List<PageInfo>, recycle: Boolean = false) {
         if (newPages.isEmpty() || newPages.size != pages.size) return
         pages = newPages
+        if (recycle) {
+            recycleBitmaps()
+            inFlight.clear()
+            textCache.clear()
+            linkCache.clear()
+            linksInFlight.clear()
+        }
         rebuildTopsPreservingScroll()
         applyPendingPageRestore()
         clampScroll()
@@ -243,62 +257,41 @@ class PdfStripView @JvmOverloads constructor(
 
     fun hasDocument(): Boolean = pages.isNotEmpty()
 
-    fun hasFirstPagePainted(): Boolean {
-        if (pages.isEmpty() || width <= 0) return false
-        return hasPainted(currentVisiblePage())
-    }
-
     private fun hasPainted(index: Int): Boolean {
         val cached = bitmaps[index] ?: return false
         return cached.key == renderKey && !cached.bitmap.isRecycled
     }
 
-    private fun keepRange(center: Int): Set<Int> {
-        if (pages.isEmpty()) return emptySet()
-        val from = (center - PREFETCH_PAGES).coerceAtLeast(0)
-        val to = (center + PREFETCH_PAGES).coerceAtMost(pages.lastIndex)
-        return (from..to).toSet()
+    private fun keepRange(center: Int): IntRange {
+        if (pages.isEmpty()) return IntRange.EMPTY
+        return (center - PREFETCH_PAGES).coerceAtLeast(0)..(center + PREFETCH_PAGES).coerceAtMost(pages.lastIndex)
     }
 
-    private fun requestPagesAround(
-        center: Int,
-        firstVisible: Int = center,
-        lastVisible: Int = center,
-        widthHint: Int = 0,
-    ) {
+    private fun targetWidthPx(): Int = (maxWidthPdf * scale).roundToInt().coerceIn(1, 4096)
+
+    private fun requestPagesAround(center: Int, widthHint: Int = 0) {
         if (pages.isEmpty() || width <= 0) return
         val keep = keepRange(center)
         callbacks?.cancelRendersExcept(keep)
         inFlight.removeAll { it !in keep }
-        val targetWidth = if (widthHint > 0) {
-            widthHint
-        } else {
-            (maxWidthPdf * scale).roundToInt().coerceIn(1, 4096)
-        }
-        val order = ArrayList<Int>(keep.size)
-        order.add(center.coerceIn(0, pages.lastIndex))
-        var d = 1
-        val from = keep.minOrNull() ?: firstVisible
-        val to = keep.maxOrNull() ?: lastVisible
-        while (order.size < keep.size) {
+        val targetWidth = if (widthHint > 0) widthHint else targetWidthPx()
+        requestIfNeeded(center, targetWidth, urgent = true)
+        for (d in 1..PREFETCH_PAGES) {
             val before = center - d
             val after = center + d
-            if (before >= from) order.add(before)
-            if (after <= to) order.add(after)
-            d++
-            if (d > PREFETCH_PAGES + 1) break
-        }
-        for (i in order) {
-            val cached = bitmaps[i]
-            val ready = cached != null && cached.key == renderKey && !cached.bitmap.isRecycled
-            val sharp = ready && cached != null && abs(cached.width - targetWidth) <= 1
-            if (!sharp && i !in inFlight) {
-                inFlight.add(i)
-                callbacks?.requestPage(i, targetWidth, urgent = i == center)
-            }
+            if (before >= keep.first) requestIfNeeded(before, targetWidth, urgent = false)
+            if (after <= keep.last) requestIfNeeded(after, targetWidth, urgent = false)
         }
     }
 
+    private fun requestIfNeeded(index: Int, targetWidth: Int, urgent: Boolean) {
+        val cached = bitmaps[index]
+        val sharp = cached != null && cached.key == renderKey && !cached.bitmap.isRecycled &&
+            abs(cached.width - targetWidth) <= 1
+        if (!sharp && inFlight.add(index)) {
+            callbacks?.requestPage(index, targetWidth, urgent)
+        }
+    }
     fun applyFitWidthForPageSelect() {
         if (!pageSelectLockSide) {
             savedLockSideScroll = lockSideScroll
@@ -321,6 +314,7 @@ class PdfStripView @JvmOverloads constructor(
         linksInFlight.clear()
         selection = null
         searchHits = emptyList()
+        searchByPage = emptyMap()
         searchIndex = 0
         callbacks?.onSelectionText(null)
         tapZoomSnapshot = null
@@ -331,16 +325,15 @@ class PdfStripView @JvmOverloads constructor(
         lastReportedCount = -1
         rebuildTops()
         if (width > 0 && pages.isNotEmpty()) {
-            val restoring = hasPendingPageRestore() || hasPendingRestore()
+            val restoring = hasPendingPageRestore()
             applyZoomInternal(zoomMode, customPercent, keepScroll = restoring, centerX = !restoring)
-            if (!applyPendingPageRestore() && hasPendingRestore()) {
-                applyPendingRestore(consume = true)
-            } else if (!restoring) {
+            applyPendingPageRestore()
+            if (!restoring) {
                 scrollXPdf = 0f
                 scrollYPdf = 0f
                 clampScroll()
             }
-        } else if (!hasPendingPageRestore() && !hasPendingRestore()) {
+        } else if (!hasPendingPageRestore()) {
             scrollXPdf = 0f
             scrollYPdf = 0f
         }
@@ -350,18 +343,6 @@ class PdfStripView @JvmOverloads constructor(
     }
 
     fun paintKey(): Long = renderKey
-
-    fun restorePosition(scrollX: Float, scrollY: Float, sticky: Boolean = true) {
-        pendingRestoreX = scrollX
-        pendingRestoreY = scrollY
-        if (!sticky) {
-            applyPendingRestore(consume = true)
-            return
-        }
-        if (width > 0 && pages.isNotEmpty()) {
-            applyPendingRestore(consume = false)
-        }
-    }
 
     fun currentScrollXPdf(): Float = scrollXPdf
 
@@ -387,9 +368,6 @@ class PdfStripView @JvmOverloads constructor(
         if (scrollX != null) pendingRestoreX = scrollX
         if (!applyPendingPageRestore()) return
         scroller.abortAnimation()
-        val keep = keepRange(index.coerceIn(0, pages.lastIndex))
-        dropInFlightExcept(keep)
-        callbacks?.cancelRendersExcept(keep)
         requestPagesAround(index.coerceIn(0, pages.lastIndex))
         invalidate()
     }
@@ -411,31 +389,10 @@ class PdfStripView @JvmOverloads constructor(
         pendingRestorePage = null
         pendingRestoreOffset = null
         pendingRestoreX = null
-        pendingRestoreY = null
         scroller.abortAnimation()
-        val keep = keepRange(index)
-        dropInFlightExcept(keep)
-        callbacks?.cancelRendersExcept(keep)
         requestPagesAround(index)
         invalidate()
         return true
-    }
-
-    private fun hasPendingRestore(): Boolean =
-        pendingRestoreX != null && pendingRestoreY != null
-
-    private fun applyPendingRestore(consume: Boolean = true) {
-        val x = pendingRestoreX ?: return
-        val y = pendingRestoreY ?: return
-        if (width <= 0 || pages.isEmpty()) return
-        scrollXPdf = x
-        scrollYPdf = y
-        clampScroll()
-        if (consume) {
-            pendingRestoreX = null
-            pendingRestoreY = null
-        }
-        invalidate()
     }
 
     fun setPageSelect(on: Boolean, selected: Collection<Int>) {
@@ -471,6 +428,19 @@ class PdfStripView @JvmOverloads constructor(
         pageBorderColor = settings.pageBorderColor
         allowFollowLinks = settings.allowFollowLinks
         allowTextSelection = settings.allowTextSelection
+        penModeEnabled = settings.penModeEnabled
+        penIgnoresScrollLock = settings.penIgnoresScrollLock
+        penTapAction = settings.penTapAction()
+        penScreenDoubleAction = settings.penScreenDoubleAction()
+        penScreenHoldAction = settings.penScreenHoldAction()
+        penPressAction = settings.penPressAction()
+        penHoldAction = settings.penHoldAction()
+        airPressAction = settings.airPressAction()
+        airHoldAction = settings.airHoldAction()
+        penDoubleAction = settings.penDoubleAction()
+        airDoubleAction = settings.airDoubleAction()
+        penDoubleTapPeriodMs = ViewerSettings.clampPenTimingMs(settings.penDoubleTapPeriodMs)
+        penHoldPeriodMs = ViewerSettings.clampPenTimingMs(settings.penHoldPeriodMs)
         doubleTapMenu = settings.doubleTapMenu
         singleTapMenu = settings.singleTapMenu
         swipeFromBottomMenu = settings.swipeFromBottomMenu
@@ -522,9 +492,19 @@ class PdfStripView @JvmOverloads constructor(
     fun setSearchHits(hits: List<SearchHit>, index: Int) {
         searchHits = hits
         searchIndex = index.coerceAtLeast(0)
-        val pagesNeeded = hits.flatMap { listOf(it.startPage, it.endPage) }.toSet()
-        pagesNeeded.forEach { p -> ensureText(p) { invalidate() } }
+        val byPage = HashMap<Int, MutableList<Int>>()
+        val needed = HashSet<Int>()
+        hits.forEachIndexed { i, hit ->
+            needed.add(hit.startPage)
+            needed.add(hit.endPage)
+            for (p in min(hit.startPage, hit.endPage)..max(hit.startPage, hit.endPage)) {
+                byPage.getOrPut(p) { ArrayList() }.add(i)
+            }
+        }
+        searchByPage = byPage
+        needed.forEach { p -> ensureText(p) { invalidate() } }
         if (hits.isNotEmpty()) {
+            callbacks?.onNonScrollNavigation()
             val hit = hits[searchIndex.coerceIn(0, hits.lastIndex)]
             ensureText(hit.startPage) {
                 scrollToChar(hit.startPage, hit.startIndex)
@@ -539,11 +519,15 @@ class PdfStripView @JvmOverloads constructor(
             return
         }
         inFlight.remove(index)
-        val old = bitmaps.put(index, CachedPage(width, renderKey, bitmap))
-        if (old != null && old.bitmap !== bitmap) old.bitmap.recycle()
+        val page = CachedPage(width, renderKey, bitmap)
+        val old = bitmaps.put(index, page)
+        cachedBytes += page.bytes
+        if (old != null) {
+            cachedBytes -= old.bytes
+            if (old.bitmap !== bitmap) old.bitmap.recycle()
+        }
         trimCache()
         invalidate()
-        onPagePainted?.invoke(index)
     }
 
     fun goToPage(index: Int, yOnPage: Float? = null) {
@@ -559,22 +543,14 @@ class PdfStripView @JvmOverloads constructor(
         clampScroll()
         scroller.abortAnimation()
         if (scrubbing) {
-            val w = (maxWidthPdf * scale).roundToInt().coerceIn(1, 4096)
             if (index !in inFlight && !hasPainted(index)) {
                 inFlight.add(index)
-                callbacks?.requestPage(index, w, urgent = true)
+                callbacks?.requestPage(index, targetWidthPx(), urgent = true)
             }
         } else {
-            val keep = keepRange(index)
-            dropInFlightExcept(keep)
-            callbacks?.cancelRendersExcept(keep)
             requestPagesAround(index)
         }
         invalidate()
-    }
-
-    fun clearInFlight() {
-        inFlight.clear()
     }
 
     fun setScrubbing(on: Boolean) {
@@ -583,21 +559,78 @@ class PdfStripView @JvmOverloads constructor(
         if (!on) invalidate()
     }
 
-    fun isScrubbing(): Boolean = scrubbing
-
-    fun dropInFlightExcept(keep: Set<Int>) {
-        inFlight.removeAll { it !in keep }
-    }
-
     fun applyFitWidth() {
         userZoomed = true
         fitWidthLockHeld = false
+        presenting = false
         zoomMode = ZoomMode.FIT_WIDTH
         applyZoomInternal(ZoomMode.FIT_WIDTH, customPercent, keepScroll = true, centerX = true)
         scrollXPdf = centerScrollX()
         clampScroll()
         lockSideScroll = true
         callbacks?.onLockSideScroll(true)
+        invalidate()
+    }
+
+    fun applyFitHeight() {
+        if (pages.isEmpty() || width <= 0 || height <= 0) return
+        userZoomed = true
+        presenting = false
+        noteUserZoomTo(ZoomMode.FIT_HEIGHT)
+        zoomMode = ZoomMode.FIT_HEIGHT
+        applyZoomInternal(ZoomMode.FIT_HEIGHT, customPercent, keepScroll = true, centerX = true)
+        invalidate()
+    }
+
+    fun setPresentation(on: Boolean) {
+        if (presenting == on) return
+        presenting = on
+        presenterPan = 0f
+        if (on && pages.isNotEmpty() && width > 0) {
+            applyPresenterPage(currentVisiblePage())
+        }
+        invalidate()
+    }
+
+    fun isPresenting(): Boolean = presenting
+
+    fun stepPage(delta: Int) {
+        if (pages.isEmpty() || delta == 0) return
+        val next = (currentVisiblePage() + delta).coerceIn(0, pages.lastIndex)
+        callbacks?.onNonScrollNavigation()
+        if (presenting) {
+            applyPresenterPage(next)
+        } else {
+            goToPage(next)
+        }
+    }
+
+    fun scrollByScreen(direction: Int) {
+        if (pages.isEmpty() || scale <= 0f || direction == 0 || height <= 0) return
+        scroller.abortAnimation()
+        scrollYPdf += direction * (height / scale)
+        clampScroll()
+        callbacks?.onUserPan()
+        invalidate()
+    }
+
+    private fun applyPresenterPage(index: Int) {
+        if (pages.isEmpty() || width <= 0 || index !in pages.indices) return
+        zoomMode = ZoomMode.FIT_PAGE
+        val page = pages[index]
+        scale = min(width / max(page.width, 1f), height / max(page.height, 1f))
+            .coerceIn(minScale(), maxScale())
+        rebuildTops()
+        scrollXPdf = (page.width * scale - width) / (2f * scale)
+        val viewH = if (scale <= 0f) 0f else height / scale
+        val top = pageTops[index]
+        scrollYPdf = if (page.height < viewH) {
+            top - (viewH - page.height) / 2f
+        } else {
+            top
+        }
+        clampScroll()
+        requestPagesAround(index)
         invalidate()
     }
 
@@ -702,6 +735,10 @@ class PdfStripView @JvmOverloads constructor(
         }
         val nextScale = when (snap.mode) {
             ZoomMode.FIT_WIDTH -> fitWidthUsable() / fitWidthPageWidth()
+            ZoomMode.FIT_HEIGHT -> {
+                val page = pages.getOrNull(currentVisiblePage()) ?: pages[0]
+                height / max(page.height, 1f)
+            }
             ZoomMode.FIT_PAGE -> {
                 val page = pages.getOrNull(currentVisiblePage()) ?: pages[0]
                 min(width / page.width, height / max(page.height, 1f))
@@ -795,9 +832,12 @@ class PdfStripView @JvmOverloads constructor(
         return if (oneHundred <= 0f) 100f else (scale / oneHundred) * 100f
     }
 
-    private fun allowSidePan(pointerCount: Int): Boolean {
-        if (folioPaging && pointerCount < 2 && !twoFingerGesture) return false
-        if (lockSideScroll) return false
+    private fun allowSidePan(pointerCount: Int, stylus: Boolean = false): Boolean {
+        if (presenting) return false
+        val penScroll = stylus && penModeEnabled
+        if (folioPaging && pointerCount < 2 && !twoFingerGesture && !penScroll) return false
+        if (lockSideScroll && !(penScroll && penIgnoresScrollLock)) return false
+        if (penScroll) return true
         if (!twoFingerPan) return true
         return pointerCount >= 2 || twoFingerGesture
     }
@@ -838,8 +878,8 @@ class PdfStripView @JvmOverloads constructor(
     ) {
         if (width <= 0 || pages.isEmpty()) return
         val vis = currentVisiblePage()
-        val focusY = scrollYPdf + (if (scale == 0f) 0f else (height / 2f) / scale)
-        val focusX = scrollXPdf + (if (scale == 0f) 0f else (width / 2f) / scale)
+        val focusY = screenCenterPdfY()
+        val focusX = screenCenterPdfX()
         val offsetInPage = if (vis in pages.indices && vis in pageTops.indices) {
             focusY - pageTops[vis]
         } else {
@@ -849,28 +889,27 @@ class PdfStripView @JvmOverloads constructor(
         val fitPage = pages.getOrNull(vis) ?: pages[0]
         val next = when (mode) {
             ZoomMode.FIT_WIDTH -> fitWidthUsable() / fitWidthPageWidth()
+            ZoomMode.FIT_HEIGHT -> height / max(fitPage.height, 1f)
             ZoomMode.FIT_PAGE -> min(width / fitPage.width, height / max(fitPage.height, 1f))
             ZoomMode.CUSTOM -> (dpi / 72f) * (percent / 100f)
         }.coerceIn(minScale(), maxScale())
         scale = next
         rebuildTops()
-        val restoring = hasPendingRestore()
         if (keepScroll) {
             scrollXPdf = focusX - (width / 2f) / scale
-            scrollYPdf = if (vis in pageTops.indices) {
-                pageTops[vis] + offsetInPage - (height / 2f) / scale
-            } else {
-                focusY - (height / 2f) / scale
+            scrollYPdf = when {
+                mode == ZoomMode.FIT_HEIGHT && vis in pageTops.indices -> pageTops[vis]
+                vis in pageTops.indices -> pageTops[vis] + offsetInPage - (height / 2f) / scale
+                else -> focusY - (height / 2f) / scale
             }
-        } else if (!restoring) {
+        } else {
             scrollYPdf = 0f
         }
-        if (centerX && !restoring) {
+        if (centerX) {
             scrollXPdf = centerScrollX()
         }
         clampScroll()
         inFlight.clear()
-        applyPendingRestore(consume = true)
     }
 
     private fun fitWidthPageWidth(): Float {
@@ -948,7 +987,7 @@ class PdfStripView @JvmOverloads constructor(
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
         if (w <= 0 || pages.isEmpty()) return
-        val restoring = hasPendingPageRestore() || hasPendingRestore()
+        val restoring = hasPendingPageRestore()
         if (oldw > 0 && w != oldw && scale > 0f && !restoring) {
             val oldUsable = (oldw - 2f * horizontalPagePaddingPx).coerceAtLeast(1f)
             val newUsable = (w - 2f * horizontalPagePaddingPx).coerceAtLeast(1f)
@@ -969,9 +1008,7 @@ class PdfStripView @JvmOverloads constructor(
                 keepScroll = oldw > 0 || restoring,
                 centerX = oldw <= 0 && !restoring,
             )
-            if (!applyPendingPageRestore()) {
-                applyPendingRestore(consume = true)
-            }
+            applyPendingPageRestore()
             invalidate()
         } else if (h != oldh) {
             clampScroll()
@@ -984,6 +1021,7 @@ class PdfStripView @JvmOverloads constructor(
             scrollXPdf = scroller.currX / scale
             scrollYPdf = scroller.currY / scale
             clampScroll()
+            callbacks?.onUserPan()
             postInvalidateOnAnimation()
         }
     }
@@ -999,20 +1037,18 @@ class PdfStripView @JvmOverloads constructor(
         val botPdf = scrollYPdf + height / scale
         val first = firstVisiblePage(topPdf)
         val last = lastVisiblePage(botPdf)
-        val targetWidth = (maxWidthPdf * scale).roundToInt().coerceIn(1, 4096)
         val active = currentVisiblePage()
+        val left = -scrollXPdf * scale
 
         for (i in first..last) {
             val info = pages[i]
-            val left = -scrollXPdf * scale
             val top = (pageTops[i] - scrollYPdf) * scale
             destRect.set(left, top, left + info.width * scale, top + info.height * scale)
             val cached = bitmaps[i]
-            val drawable = cached != null && cached.key == renderKey && !cached.bitmap.isRecycled
-            if (drawable && cached != null) {
+            if (cached != null && cached.key == renderKey && !cached.bitmap.isRecycled) {
                 canvas.drawBitmap(cached.bitmap, null, destRect, bitmapPaint)
             }
-            val showFocusBorder = i == active && (pageSelectMode || (!pageSelectMode && pageBorderEnabled))
+            val showFocusBorder = i == active && (pageSelectMode || pageBorderEnabled)
             if (showFocusBorder) {
                 canvas.drawRect(destRect, borderPaint)
             }
@@ -1024,11 +1060,9 @@ class PdfStripView @JvmOverloads constructor(
         }
         drawHandles(canvas)
         if (!scrubbing) {
-            requestPagesAround(active, first, last, targetWidth)
+            requestPagesAround(active, targetWidthPx())
             val keep = keepRange(active)
-            val keepFrom = keep.minOrNull() ?: first
-            val keepTo = keep.maxOrNull() ?: last
-            trimOffscreen(keepFrom, keepTo)
+            trimOffscreen(keep.first, keep.last)
             if (hasPainted(active) && active !in linkCache && active !in linksInFlight) {
                 linksInFlight.add(active)
                 callbacks?.requestLinks(active)
@@ -1062,24 +1096,15 @@ class PdfStripView @JvmOverloads constructor(
     }
 
     private fun drawSearchOnPage(canvas: Canvas, page: Int) {
-        if (searchHits.isEmpty()) return
+        val hitIdx = searchByPage[page] ?: return
         val chars = textCache[page] ?: return
-        searchHits.forEachIndexed { i, hit ->
-            val paint = if (i == searchIndex) searchCurrentPaint else searchPaint
+        for (i in hitIdx) {
+            val hit = searchHits[i]
             val range = selectedIndices(
                 page,
                 SelectionRange(hit.startPage, hit.startIndex, hit.endPage, hit.endIndex)
-            ) ?: return@forEachIndexed
-            for (idx in range) {
-                val c = chars[idx]
-                path.reset()
-                path.moveTo(pageToViewX(page, c.ulx), pageToViewY(page, c.uly))
-                path.lineTo(pageToViewX(page, c.urx), pageToViewY(page, c.ury))
-                path.lineTo(pageToViewX(page, c.lrx), pageToViewY(page, c.lry))
-                path.lineTo(pageToViewX(page, c.llx), pageToViewY(page, c.lly))
-                path.close()
-                canvas.drawPath(path, paint)
-            }
+            ) ?: continue
+            drawChars(canvas, page, chars, range, if (i == searchIndex) searchCurrentPaint else searchPaint)
         }
     }
 
@@ -1087,6 +1112,10 @@ class PdfStripView @JvmOverloads constructor(
         val sel = selection ?: return
         val chars = textCache[page] ?: return
         val range = selectedIndices(page, sel) ?: return
+        drawChars(canvas, page, chars, range, highlightPaint)
+    }
+
+    private fun drawChars(canvas: Canvas, page: Int, chars: List<CharBox>, range: IntRange, paint: Paint) {
         for (idx in range) {
             val c = chars[idx]
             path.reset()
@@ -1095,10 +1124,9 @@ class PdfStripView @JvmOverloads constructor(
             path.lineTo(pageToViewX(page, c.lrx), pageToViewY(page, c.lry))
             path.lineTo(pageToViewX(page, c.llx), pageToViewY(page, c.lly))
             path.close()
-            canvas.drawPath(path, highlightPaint)
+            canvas.drawPath(path, paint)
         }
     }
-
     private fun drawHandles(canvas: Canvas) {
         val start = startHandlePoint() ?: return
         val end = endHandlePoint() ?: return
@@ -1182,7 +1210,11 @@ class PdfStripView @JvmOverloads constructor(
             val dx = event.x - pendingZoomX
             val dy = event.y - pendingZoomY
             val inSlop = dx * dx + dy * dy <= tapSlopPx * tapSlopPx
-            if (inSlop && !lockZoom && !selecting && draggingHandle == null && !pinching) {
+            if (penModeEnabled && isStylus(event) &&
+                penScreenDoubleAction != PenButtonAction.DEFAULT_INTERACTION
+            ) {
+                cancelPendingZoom()
+            } else if (inSlop && !lockZoom && !selecting && draggingHandle == null && !pinching) {
                 cancelPendingZoom()
                 toggleTapZoom(event.x, event.y)
                 swallowUntilUp = true
@@ -1195,10 +1227,20 @@ class PdfStripView @JvmOverloads constructor(
         if (handleBottomMenuSwipe(event)) {
             return true
         }
-        if (event.actionMasked == MotionEvent.ACTION_DOWN && event.x > edgeSlop && !folioPaging) {
+        rememberStylusPos(event)
+        if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+            if (penModeEnabled && isStylus(event)) {
+                parent.requestDisallowInterceptTouchEvent(true)
+                callbacks?.onDrawerGesturesEnabled(false)
+            } else if (event.x > edgeSlop && !folioPaging) {
+                parent.requestDisallowInterceptTouchEvent(true)
+            }
+        }
+        handleStylusButton(event)
+        if (penModeEnabled && isStylus(event) && event.actionMasked == MotionEvent.ACTION_MOVE) {
             parent.requestDisallowInterceptTouchEvent(true)
         }
-        if (folioPaging) {
+        if (folioPaging && !(penModeEnabled && isStylus(event))) {
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
                     folioDownX = event.x
@@ -1211,9 +1253,10 @@ class PdfStripView @JvmOverloads constructor(
                 MotionEvent.ACTION_MOVE -> if (event.pointerCount == 1 && !folioSwiped) {
                     val dx = event.x - folioDownX
                     val dy = event.y - folioDownY
-                    if (abs(dx) > touchSlopPx && abs(dx) > abs(dy)) {
+                    if (abs(dx) > folioSwipeSlopPx && abs(dx) > 2f * abs(dy)) {
                         folioSwiped = true
                         parent.requestDisallowInterceptTouchEvent(true)
+                        callbacks?.onNonScrollNavigation()
                         callbacks?.onFolioSwipe(if (dx < 0f) 1 else -1)
                         swallowUntilUp = true
                     } else if (abs(dy) > touchSlopPx) {
@@ -1251,20 +1294,20 @@ class PdfStripView @JvmOverloads constructor(
             draggingHandle = null
             cancelPendingZoom()
         }
-        val scaleHandled = scaleDetector.onTouchEvent(event)
-        val gestureHandled = gestureDetector.onTouchEvent(event)
+        gestureDetector.onTouchEvent(event)
         if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) {
             if (event.actionMasked == MotionEvent.ACTION_CANCEL) cancelPendingZoom()
             endTwoFingerZoom()
             selecting = false
             draggingHandle = null
             twoFingerGesture = false
+            callbacks?.onDrawerGesturesEnabled(true)
         }
-        return scaleHandled || gestureHandled || true
+        return true
     }
 
     private fun handleBottomMenuSwipe(event: MotionEvent): Boolean {
-        if (pageSelectMode || !swipeFromBottomMenu) {
+        if (pageSelectMode || !swipeFromBottomMenu || penBlocksMenu(event)) {
             bottomMenuTracking = false
             return false
         }
@@ -1397,20 +1440,10 @@ class PdfStripView @JvmOverloads constructor(
         return hypot(dx, dy).coerceAtLeast(1f)
     }
 
-    private inner class ScaleListener : ScaleGestureDetector.SimpleOnScaleGestureListener() {
-        override fun onScaleBegin(detector: ScaleGestureDetector): Boolean {
-            return false
-        }
-
-        override fun onScale(detector: ScaleGestureDetector): Boolean {
-            return false
-        }
-    }
-
     private inner class GestureListener : GestureDetector.SimpleOnGestureListener() {
         override fun onDown(e: MotionEvent): Boolean {
             if (!scroller.isFinished) scroller.abortAnimation()
-            draggingHandle = if (allowTextSelection) hitHandle(e.x, e.y) else null
+            draggingHandle = if (textSelectionAllowed(isStylus(e))) hitHandle(e.x, e.y) else null
             return true
         }
 
@@ -1420,14 +1453,33 @@ class PdfStripView @JvmOverloads constructor(
             distanceX: Float,
             distanceY: Float
         ): Boolean {
-            if (pinching || twoFingerTracking || scaleDetector.isInProgress || bottomMenuTracking) return false
+            if (pinching || twoFingerTracking || bottomMenuTracking) return false
             cancelPendingZoom()
-            if (allowTextSelection && (selecting || draggingHandle != null)) {
+            val stylus = isStylus(e2)
+            val canSelect = textSelectionAllowed(stylus)
+            if (canSelect && (selecting || draggingHandle != null)) {
                 extendSelection(e2.x, e2.y)
                 return true
             }
-            if (allowSidePan(e2.pointerCount)) scrollXPdf += distanceX / scale
+            if (stylus && penModeEnabled) {
+                parent.requestDisallowInterceptTouchEvent(true)
+            }
+            if (presenting) {
+                val dominant = if (abs(distanceX) > abs(distanceY)) distanceX else distanceY
+                presenterPan += dominant
+                val step = 48f * resources.displayMetrics.density
+                if (presenterPan <= -step) {
+                    presenterPan = 0f
+                    stepPage(-1)
+                } else if (presenterPan >= step) {
+                    presenterPan = 0f
+                    stepPage(1)
+                }
+                return true
+            }
+            if (allowSidePan(e2.pointerCount, stylus)) scrollXPdf += distanceX / scale
             scrollYPdf += distanceY / scale
+            callbacks?.onUserPan()
             clampScroll()
             invalidate()
             return true
@@ -1440,6 +1492,17 @@ class PdfStripView @JvmOverloads constructor(
             velocityY: Float
         ): Boolean {
             if (selecting || draggingHandle != null || pinching || twoFingerTracking || bottomMenuTracking || pages.isEmpty()) return false
+            if (presenting) {
+                if (max(abs(velocityX), abs(velocityY)) > 200f) {
+                    val next = if (abs(velocityX) > abs(velocityY)) {
+                        if (velocityX > 0f) -1 else 1
+                    } else {
+                        if (velocityY > 0f) -1 else 1
+                    }
+                    stepPage(next)
+                }
+                return true
+            }
             val minXPx = (-width / 2f).toInt()
             val maxXPx = (maxWidthPdf * scale - width / 2f).toInt()
             val loX = min(minXPx, maxXPx)
@@ -1451,7 +1514,7 @@ class PdfStripView @JvmOverloads constructor(
             scroller.fling(
                 (scrollXPdf * scale).toInt(),
                 (scrollYPdf * scale).toInt(),
-                if (allowSidePan(if (twoFingerGesture) 2 else 1)) -velocityX.toInt() else 0,
+                if (allowSidePan(if (twoFingerGesture) 2 else 1, isStylus(e2))) -velocityX.toInt() else 0,
                 -velocityY.toInt(),
                 loX,
                 hiX,
@@ -1469,16 +1532,14 @@ class PdfStripView @JvmOverloads constructor(
         override fun onDoubleTap(e: MotionEvent): Boolean {
             if (pageSelectMode) return true
             if (selecting || draggingHandle != null || pinching || twoFingerTracking || pages.isEmpty()) return false
-            if (!doubleTapMenu) {
-                toggleTapZoom(e.x, e.y)
+            if (penModeEnabled && isStylus(e)) {
+                performMappedAction(penScreenDoubleAction, e.x, e.y) {
+                    fingerDoubleTap(e.x, e.y)
+                    true
+                }
                 return true
             }
-            callbacks?.onDoubleTap()
-            cancelPendingZoom()
-            pendingZoom = true
-            pendingZoomX = e.x
-            pendingZoomY = e.y
-            postDelayed(pendingZoomRunnable, ViewConfiguration.getDoubleTapTimeout().toLong())
+            fingerDoubleTap(e.x, e.y)
             return true
         }
 
@@ -1494,34 +1555,24 @@ class PdfStripView @JvmOverloads constructor(
                 clearSelection()
                 return true
             }
-            if (allowFollowLinks) {
-                val page = pageAt(e.y) ?: return openMenuIfSingleTap()
-                val pdfX = viewToPageX(page, e.x)
-                val pdfY = viewToPageY(page, e.y)
-                val hit = linkCache[page]?.firstOrNull { link ->
-                    val b = link.bounds
-                    pdfX >= b.left - 8f && pdfX <= b.right + 8f &&
-                        pdfY >= b.top - 8f && pdfY <= b.bottom + 8f
-                }
-                if (hit != null) {
-                    callbacks?.onLinkTapped(hit.uri, hit.isExternal)
-                    return true
+            if (penModeEnabled && isStylus(e)) {
+                return performMappedAction(penTapAction, e.x, e.y) {
+                    fingerSingleTap(e.x, e.y)
                 }
             }
-            return openMenuIfSingleTap()
-        }
-
-        private fun openMenuIfSingleTap(): Boolean {
-            if (!singleTapMenu || selecting || draggingHandle != null || pinching) return false
-            callbacks?.onDoubleTap()
-            return true
+            return fingerSingleTap(e.x, e.y)
         }
 
         override fun onLongPress(e: MotionEvent) {
-            if (pageSelectMode) return
-            if (!allowTextSelection || pages.isEmpty()) return
-            selecting = true
-            startWordAt(e.x, e.y)
+            if (pageSelectMode || pages.isEmpty()) return
+            if (penModeEnabled && isStylus(e)) {
+                performMappedAction(penScreenHoldAction, e.x, e.y) {
+                    startFingerSelection(e.x, e.y)
+                    true
+                }
+                return
+            }
+            startFingerSelection(e.x, e.y)
         }
     }
 
@@ -1643,43 +1694,355 @@ class PdfStripView @JvmOverloads constructor(
     private fun recycleBitmaps() {
         bitmaps.values.forEach { if (!it.bitmap.isRecycled) it.bitmap.recycle() }
         bitmaps.clear()
+        cachedBytes = 0L
+    }
+
+    private fun dropCached(key: Int) {
+        val old = bitmaps.remove(key) ?: return
+        cachedBytes -= old.bytes
+        if (!old.bitmap.isRecycled) old.bitmap.recycle()
     }
 
     private fun trimCache() {
-        val keep = if (pages.isEmpty()) emptySet() else keepRange(currentVisiblePage())
-        while (bitmaps.size > MAX_CACHED_PAGES || cacheBytes() > MAX_CACHE_BYTES) {
-            val eldest = bitmaps.entries.firstOrNull { it.key !in keep } ?: break
-            if (!eldest.value.bitmap.isRecycled) eldest.value.bitmap.recycle()
-            bitmaps.remove(eldest.key)
+        val keep = keepRange(currentVisiblePage())
+        while (bitmaps.size > MAX_CACHED_PAGES || cachedBytes > MAX_CACHE_BYTES) {
+            val eldest = bitmaps.keys.firstOrNull { it !in keep } ?: break
+            dropCached(eldest)
         }
-    }
-
-    private fun cacheBytes(): Long {
-        var total = 0L
-        bitmaps.values.forEach { total += it.bitmap.byteCount.toLong() }
-        return total
     }
 
     private fun trimOffscreen(first: Int, last: Int) {
         val keepFrom = (first - PREFETCH_PAGES).coerceAtLeast(0)
         val keepTo = (last + PREFETCH_PAGES).coerceAtMost(pages.lastIndex)
-        val remove = bitmaps.keys.filter { it < keepFrom || it > keepTo }
-        for (k in remove) {
-            val old = bitmaps.remove(k)
-            if (old != null && !old.bitmap.isRecycled) old.bitmap.recycle()
+        val it = bitmaps.entries.iterator()
+        while (it.hasNext()) {
+            val e = it.next()
+            if (e.key < keepFrom || e.key > keepTo) {
+                it.remove()
+                cachedBytes -= e.value.bytes
+                if (!e.value.bitmap.isRecycled) e.value.bitmap.recycle()
+            }
         }
         trimCache()
     }
-
     override fun onDetachedFromWindow() {
         cancelPendingZoom()
+        cancelStylusHold()
+        cancelAirHold()
+        cancelPendingPenPress()
         recycleBitmaps()
         super.onDetachedFromWindow()
+    }
+
+    private fun isStylusPointer(event: MotionEvent): Boolean {
+        if (event.pointerCount > 0) {
+            val index = event.actionIndex.coerceIn(0, event.pointerCount - 1)
+            val type = event.getToolType(index)
+            if (type == MotionEvent.TOOL_TYPE_STYLUS || type == MotionEvent.TOOL_TYPE_ERASER) return true
+        }
+        return event.source and InputDevice.SOURCE_STYLUS == InputDevice.SOURCE_STYLUS
+    }
+
+    private fun isStylus(event: MotionEvent): Boolean {
+        if (isStylusPointer(event)) return true
+        return SystemClock.uptimeMillis() - lastStylusHoverAt < 400L
+    }
+
+    private fun penBlocksMenu(event: MotionEvent): Boolean =
+        penModeEnabled && isStylus(event) && penTapAction != PenButtonAction.DEFAULT_INTERACTION
+
+    private fun rememberStylusPos(event: MotionEvent) {
+        if (event.pointerCount == 0) return
+        if (!isStylus(event)) return
+        val index = event.actionIndex.coerceIn(0, event.pointerCount - 1)
+        lastStylusX = event.getX(index)
+        lastStylusY = event.getY(index)
+    }
+
+    override fun onHoverEvent(event: MotionEvent): Boolean {
+        if (handleStylusHover(event)) return true
+        return super.onHoverEvent(event)
+    }
+
+    override fun onGenericMotionEvent(event: MotionEvent): Boolean {
+        if (handleStylusHover(event)) return true
+        return super.onGenericMotionEvent(event)
+    }
+
+    fun handleStylusHover(event: MotionEvent): Boolean {
+        if (isStylusPointer(event)) lastStylusHoverAt = SystemClock.uptimeMillis()
+        rememberStylusPos(event)
+        if (!penModeEnabled) return false
+        val action = event.actionMasked
+        val stylusButtonEvent = action == MotionEvent.ACTION_BUTTON_PRESS ||
+            action == MotionEvent.ACTION_BUTTON_RELEASE ||
+            stylusSideButtonBit(event)
+        if (!isStylusPointer(event) && !stylusButtonEvent) return false
+        when (action) {
+            MotionEvent.ACTION_HOVER_ENTER,
+            MotionEvent.ACTION_HOVER_MOVE,
+            MotionEvent.ACTION_HOVER_EXIT,
+            MotionEvent.ACTION_BUTTON_PRESS,
+            MotionEvent.ACTION_BUTTON_RELEASE -> {
+                handleStylusButton(event)
+                return true
+            }
+        }
+        return false
+    }
+
+    fun handleAirActionKey(event: KeyEvent): Boolean {
+        if (!penModeEnabled) return false
+        if (event.keyCode == KeyEvent.KEYCODE_F11) {
+            if (SystemClock.uptimeMillis() - lastDigitizerButtonAt < 400L) return true
+            if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+                performMappedAction(airDoubleAction, lastStylusX, lastStylusY) {
+                    fingerDoubleTap(lastStylusX, lastStylusY)
+                    true
+                }
+            }
+            return true
+        }
+        if (!isAirActionKey(event)) return false
+        if (SystemClock.uptimeMillis() - lastDigitizerButtonAt < 400L) {
+            cancelAirHold()
+            return true
+        }
+        when (event.action) {
+            KeyEvent.ACTION_DOWN -> {
+                if (event.repeatCount > 0) {
+                    if (airButtonDown && !airHoldFired) {
+                        airHoldFired = true
+                        if (airHoldPosted) removeCallbacks(airHoldRunnable)
+                        airHoldPosted = false
+                        fireAirAction(true)
+                    }
+                    return true
+                }
+                if (airButtonDown) return true
+                airButtonDown = true
+                airHoldFired = false
+                airHoldPosted = true
+                postDelayed(airHoldRunnable, ViewConfiguration.getLongPressTimeout().toLong())
+            }
+            KeyEvent.ACTION_UP -> finishAirButton()
+            else -> {
+                cancelAirHold()
+                return false
+            }
+        }
+        return true
+    }
+
+    private fun textSelectionAllowed(stylus: Boolean): Boolean {
+        if (stylus && penModeEnabled) {
+            return penScreenHoldAction == PenButtonAction.DEFAULT_INTERACTION && allowTextSelection
+        }
+        return allowTextSelection
+    }
+
+    private fun fingerSingleTap(x: Float, y: Float): Boolean {
+        if (allowFollowLinks && followLinkAt(x, y)) return true
+        if (!singleTapMenu || selecting || draggingHandle != null || pinching) return false
+        callbacks?.onDoubleTap()
+        return true
+    }
+
+    private fun fingerDoubleTap(x: Float, y: Float) {
+        if (!doubleTapMenu) {
+            toggleTapZoom(x, y)
+            return
+        }
+        callbacks?.onDoubleTap()
+        cancelPendingZoom()
+        pendingZoom = true
+        pendingZoomX = x
+        pendingZoomY = y
+        postDelayed(pendingZoomRunnable, ViewConfiguration.getDoubleTapTimeout().toLong())
+    }
+
+    private fun startFingerSelection(x: Float, y: Float) {
+        if (!allowTextSelection || pages.isEmpty()) return
+        selecting = true
+        startWordAt(x, y)
+    }
+
+    private fun followLinkAt(x: Float, y: Float): Boolean {
+        val page = pageAt(y) ?: return false
+        val pdfX = viewToPageX(page, x)
+        val pdfY = viewToPageY(page, y)
+        val hit = linkCache[page]?.firstOrNull { link ->
+            val b = link.bounds
+            pdfX >= b.left - 8f && pdfX <= b.right + 8f &&
+                pdfY >= b.top - 8f && pdfY <= b.bottom + 8f
+        } ?: return false
+        callbacks?.onLinkTapped(hit.uri, hit.isExternal)
+        return true
+    }
+
+    private fun performMappedAction(
+        action: PenButtonAction,
+        x: Float,
+        y: Float,
+        default: () -> Boolean,
+    ): Boolean {
+        if (presenting) {
+            stepPage(1)
+            return true
+        }
+        return when (action) {
+            PenButtonAction.DEFAULT_INTERACTION -> default()
+            PenButtonAction.DO_NOTHING -> true
+            PenButtonAction.FOLLOW_LINK -> {
+                followLinkAt(x, y)
+                true
+            }
+            PenButtonAction.SCROLL_NEXT_PAGE -> {
+                scrollByScreen(1)
+                true
+            }
+            PenButtonAction.SCROLL_PREV_PAGE -> {
+                scrollByScreen(-1)
+                true
+            }
+            else -> {
+                callbacks?.onPenAction(action)
+                true
+            }
+        }
+    }
+
+    private fun stylusSideButtonBit(event: MotionEvent): Boolean {
+        val mask = MotionEvent.BUTTON_STYLUS_PRIMARY or MotionEvent.BUTTON_STYLUS_SECONDARY
+        return event.buttonState and mask != 0
+    }
+
+    private fun isStylusSideActionButton(event: MotionEvent): Boolean {
+        val button = event.actionButton
+        if (button == MotionEvent.BUTTON_STYLUS_PRIMARY ||
+            button == MotionEvent.BUTTON_STYLUS_SECONDARY
+        ) {
+            return true
+        }
+        return button == 0 && stylusSideButtonBit(event)
+    }
+
+    private fun handleStylusButton(event: MotionEvent) {
+        if (!penModeEnabled) return
+        val action = event.actionMasked
+        val bit = stylusSideButtonBit(event)
+        val explicitPress = action == MotionEvent.ACTION_BUTTON_PRESS && isStylusSideActionButton(event)
+        val explicitRelease = action == MotionEvent.ACTION_BUTTON_RELEASE && isStylusSideActionButton(event)
+        val stylusRelated = isStylus(event) || explicitPress || explicitRelease || bit
+        if (!stylusRelated) return
+        if (action == MotionEvent.ACTION_CANCEL) {
+            cancelStylusHold()
+            return
+        }
+        if (stylusIgnoreStickyUntilZero && !bit) {
+            stylusIgnoreStickyUntilZero = false
+        }
+        val pressed = when {
+            explicitPress -> true
+            explicitRelease -> false
+            action == MotionEvent.ACTION_HOVER_EXIT -> false
+            stylusIgnoreStickyUntilZero -> false
+            else -> bit
+        }
+        if (pressed && !stylusPressActive) {
+            beginStylusButton()
+        } else if (!pressed && stylusPressActive) {
+            if (bit && (explicitRelease || action == MotionEvent.ACTION_HOVER_EXIT)) {
+                stylusIgnoreStickyUntilZero = true
+            }
+            finishStylusButton()
+        }
+    }
+
+    private fun beginStylusButton() {
+        stylusPressActive = true
+        lastDigitizerButtonAt = SystemClock.uptimeMillis()
+        stylusHoldFired = false
+        stylusHoldPosted = true
+        postDelayed(stylusHoldRunnable, penHoldPeriodMs.toLong())
+    }
+
+    private fun finishStylusButton() {
+        val hold = stylusHoldFired
+        cancelStylusHold()
+        if (hold) return
+        onPenButtonClick()
+    }
+
+    private fun onPenButtonClick() {
+        if (pendingPenPress) {
+            cancelPendingPenPress()
+            performMappedAction(penDoubleAction, lastStylusX, lastStylusY) {
+                fingerDoubleTap(lastStylusX, lastStylusY)
+                true
+            }
+            return
+        }
+        pendingPenPress = true
+        postDelayed(pendingPenPressRunnable, penDoubleTapPeriodMs.toLong())
+    }
+
+    private fun cancelPendingPenPress() {
+        if (pendingPenPress) removeCallbacks(pendingPenPressRunnable)
+        pendingPenPress = false
+    }
+
+    private fun cancelStylusHold() {
+        if (stylusHoldPosted) removeCallbacks(stylusHoldRunnable)
+        stylusHoldPosted = false
+        stylusPressActive = false
+        stylusHoldFired = false
+    }
+
+    private fun finishAirButton() {
+        val hold = airHoldFired
+        cancelAirHold()
+        if (!hold) fireAirAction(false)
+    }
+
+    private fun cancelAirHold() {
+        if (airHoldPosted) removeCallbacks(airHoldRunnable)
+        airHoldPosted = false
+        airButtonDown = false
+        airHoldFired = false
+    }
+
+    private fun firePenAction(hold: Boolean) {
+        if (presenting) {
+            stepPage(if (hold) -1 else 1)
+            return
+        }
+        val action = if (hold) penHoldAction else penPressAction
+        performMappedAction(action, lastStylusX, lastStylusY) {
+            if (hold) startFingerSelection(lastStylusX, lastStylusY)
+            else fingerSingleTap(lastStylusX, lastStylusY)
+            true
+        }
+    }
+
+    private fun fireAirAction(hold: Boolean) {
+        val action = if (hold) airHoldAction else airPressAction
+        performMappedAction(action, lastStylusX, lastStylusY) {
+            if (hold) startFingerSelection(lastStylusX, lastStylusY)
+            else fingerSingleTap(lastStylusX, lastStylusY)
+            true
+        }
+    }
+
+    private fun isAirActionKey(event: KeyEvent): Boolean {
+        if (event.keyCode == KeyEvent.KEYCODE_F10) return true
+        return event.keyCode == KEYCODE_STYLUS_BUTTON
     }
 
     companion object {
         private const val PREFETCH_PAGES = 8
         private const val MAX_CACHED_PAGES = 32
         private const val MAX_CACHE_BYTES = 96L * 1024L * 1024L
+        private const val KEYCODE_STYLUS_BUTTON = 757
     }
 }

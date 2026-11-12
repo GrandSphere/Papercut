@@ -8,11 +8,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.CheckBox
-import androidx.compose.material.icons.outlined.CheckBoxOutlineBlank
-import androidx.compose.material.icons.outlined.Close
-import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -30,6 +25,7 @@ import com.grandsphere.papercut.data.DocumentPaths
 import com.grandsphere.papercut.data.PdfDocument
 import com.grandsphere.papercut.ui.chrome.OverlaySelectActions
 import com.grandsphere.papercut.ui.chrome.PapercutOverlay
+import com.grandsphere.papercut.ui.chrome.SymbolIcon
 
 @Composable
 fun ManageDocumentsOverlay(
@@ -87,8 +83,8 @@ fun ManageDocumentsOverlay(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     if (selecting) {
-                        Icon(
-                            if (checked) Icons.Outlined.CheckBox else Icons.Outlined.CheckBoxOutlineBlank,
+                        SymbolIcon(
+                            if (checked) "check_box" else "check_box_outline_blank",
                             contentDescription = null,
                             tint = MaterialTheme.colorScheme.onBackground,
                             modifier = Modifier.padding(end = 8.dp),
@@ -114,8 +110,8 @@ fun ManageDocumentsOverlay(
                     }
                     if (!selecting) {
                         IconButton(onClick = { onDelete(listOf(doc.uri)) }) {
-                            Icon(
-                                Icons.Outlined.Close,
+                            SymbolIcon(
+                                "close",
                                 contentDescription = "Delete",
                                 tint = MaterialTheme.colorScheme.onBackground,
                             )

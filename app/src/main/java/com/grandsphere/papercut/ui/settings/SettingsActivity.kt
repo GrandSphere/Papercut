@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -26,13 +27,11 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Save
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -48,6 +47,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -57,6 +57,7 @@ import androidx.lifecycle.lifecycleScope
 import com.grandsphere.papercut.data.AppFiles
 import com.grandsphere.papercut.data.BackupJson
 import com.grandsphere.papercut.data.PdfDocument
+import com.grandsphere.papercut.data.PenButtonAction
 import com.grandsphere.papercut.data.ViewerSettings
 import com.grandsphere.papercut.data.ZoomMode
 import com.grandsphere.papercut.ui.chrome.CollapsibleSection
@@ -64,6 +65,7 @@ import com.grandsphere.papercut.ui.chrome.ColourSettingRow
 import com.grandsphere.papercut.ui.chrome.ColourSwitchRow
 import com.grandsphere.papercut.ui.chrome.PapercutAlertDialog
 import com.grandsphere.papercut.ui.chrome.PapercutScreenBar
+import com.grandsphere.papercut.ui.chrome.SymbolIcon
 import com.grandsphere.papercut.ui.chrome.applyPapercutImmersive
 import com.grandsphere.papercut.ui.chrome.hidePapercutSystemBars
 import com.grandsphere.papercut.ui.chrome.SettingsSwitchRow
@@ -206,6 +208,9 @@ fun SettingsScreen(
     var copyWarn by remember { mutableStateOf(false) }
     var storedOpen by remember { mutableStateOf(false) }
     var pendingDelete by remember { mutableStateOf<List<com.grandsphere.papercut.data.StoredEntry>?>(null) }
+    var penActionsOpen by remember { mutableStateOf(false) }
+    var penTimingsOpen by remember { mutableStateOf(false) }
+    var penChoice by remember { mutableStateOf<String?>(null) }
     val view = LocalView.current
     val context = LocalContext.current
     SideEffect {
@@ -226,8 +231,8 @@ fun SettingsScreen(
             onBack = onBack,
             actions = {
                 IconButton(onClick = { onSave(current) }) {
-                    Icon(
-                        Icons.Outlined.Save,
+                    SymbolIcon(
+                        "save",
                         contentDescription = "Save",
                         tint = MaterialTheme.colorScheme.onBackground,
                     )
@@ -354,8 +359,13 @@ fun SettingsScreen(
                 )
                 HorizontalDivider(Modifier.padding(vertical = 4.dp))
                 Text("Font size", color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf(0.85f to "Smaller", 1f to "Default", 1.15f to "Larger").forEach { (scale, label) ->
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(
+                        0.75f to "Tiny",
+                        0.85f to "Smaller",
+                        1f to "Default",
+                        1.15f to "Larger",
+                    ).forEach { (scale, label) ->
                         FilterChip(
                             selected = abs(current.fontScale - scale) < 0.01f,
                             onClick = { draft = current.copy(fontScale = scale) },
@@ -503,6 +513,31 @@ fun SettingsScreen(
             }
 
             CollapsibleSection(
+                "Pen mode",
+                hint = "Stylus-only behaviour. Fingers keep working as they do now",
+            ) {
+                SettingsSwitchRow(
+                    label = "Enable pen mode",
+                    checked = current.penModeEnabled,
+                    onChecked = { on -> draft = current.copy(penModeEnabled = on) },
+                )
+                SettingsSwitchRow(
+                    label = "Pen mode ignores scroll lock",
+                    checked = current.penIgnoresScrollLock,
+                    enabled = current.penModeEnabled,
+                    onChecked = { on -> draft = current.copy(penIgnoresScrollLock = on) },
+                )
+                SettingsTapRow(
+                    label = "Pen action timings",
+                    onClick = { penTimingsOpen = true },
+                )
+                SettingsTapRow(
+                    label = "Pen actions",
+                    onClick = { penActionsOpen = true },
+                )
+            }
+
+            CollapsibleSection(
                 "Bookmarks",
                 hint = "Last reading place, manage stored bookmarks per document, or clear every bookmark",
             ) {
@@ -511,6 +546,26 @@ fun SettingsScreen(
                     checked = current.restoreLastPosition,
                     onChecked = { on -> draft = current.copy(restoreLastPosition = on) },
                 )
+                HorizontalDivider(Modifier.padding(vertical = 8.dp))
+                SettingsSwitchRow(
+                    label = "Enable quickjump",
+                    checked = current.quickJumpEnabled,
+                    onChecked = { on -> draft = current.copy(quickJumpEnabled = on) },
+                )
+                SettingsSwitchRow(
+                    label = "Show quickjump button",
+                    checked = current.showJumpOnMenubar,
+                    enabled = current.quickJumpEnabled,
+                    onChecked = { on -> draft = current.copy(showJumpOnMenubar = on) },
+                    onLongClick = {
+                        Toast.makeText(
+                            context,
+                            "Quick jump can also be reached by holding bookmarks",
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    },
+                )
+                HorizontalDivider(Modifier.padding(vertical = 8.dp))
                 SettingsTapRow(label = "Manage bookmarks", onClick = { manageOpen = true })
                 SettingsTapRow(label = "Clear bookmarks", onClick = { clearOpen = true })
             }
@@ -596,6 +651,179 @@ fun SettingsScreen(
                 colourPicker = null
             },
             onDismiss = { colourPicker = null },
+        )
+    }
+
+    if (penActionsOpen && penChoice == null) {
+        PapercutAlertDialog(
+            onDismissRequest = { penActionsOpen = false },
+            title = { Text("Pen actions") },
+            text = {
+                Column {
+                    SettingsTapRow(
+                        label = "Pen tap",
+                        value = current.penTapAction().label(),
+                        onClick = { penChoice = "tap" },
+                    )
+                    SettingsTapRow(
+                        label = "Pen double tap",
+                        value = current.penScreenDoubleAction().label(),
+                        onClick = { penChoice = "screenDouble" },
+                    )
+                    SettingsTapRow(
+                        label = "Pen hold",
+                        value = current.penScreenHoldAction().label(),
+                        onClick = { penChoice = "screenHold" },
+                    )
+                    HorizontalDivider(Modifier.padding(vertical = 8.dp))
+                    SettingsTapRow(
+                        label = "Button press",
+                        value = current.penPressAction().label(),
+                        onClick = { penChoice = "press" },
+                    )
+                    SettingsTapRow(
+                        label = "Button double press",
+                        value = current.penDoubleAction().label(),
+                        onClick = { penChoice = "double" },
+                    )
+                    SettingsTapRow(
+                        label = "Button hold",
+                        value = current.penHoldAction().label(),
+                        onClick = { penChoice = "hold" },
+                    )
+                    HorizontalDivider(Modifier.padding(vertical = 8.dp))
+                    SettingsTapRow(
+                        label = "Air action button press",
+                        value = current.airPressAction().label(),
+                        onClick = { penChoice = "airPress" },
+                    )
+                    SettingsTapRow(
+                        label = "Air action button double press",
+                        value = current.airDoubleAction().label(),
+                        onClick = { penChoice = "airDouble" },
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { penActionsOpen = false }) { Text("OK") }
+            },
+        )
+    }
+
+    val penPick = penChoice
+    if (penPick != null) {
+        val penTitle = when (penPick) {
+            "tap" -> "Pen tap"
+            "screenDouble" -> "Pen double tap"
+            "screenHold" -> "Pen hold"
+            "double" -> "Button double press"
+            "hold" -> "Button hold"
+            "airPress" -> "Air action button press"
+            "airDouble" -> "Air action button double press"
+            else -> "Button press"
+        }
+        val includeFollowLink = penPick == "tap" || penPick == "screenHold"
+        PapercutAlertDialog(
+            onDismissRequest = { penChoice = null },
+            title = { Text(penTitle) },
+            text = {
+                Column {
+                    PenButtonAction.picker(includeFollowLink).forEach { action ->
+                        TextButton(
+                            onClick = {
+                                draft = when (penPick) {
+                                    "tap" -> current.copy(penScreenTap = action.name)
+                                    "screenDouble" -> current.copy(penScreenDouble = action.name)
+                                    "screenHold" -> current.copy(penScreenHold = action.name)
+                                    "hold" -> current.copy(penButtonHold = action.name)
+                                    "double" -> current.copy(penButtonDouble = action.name)
+                                    "airPress" -> current.copy(airActionButtonPress = action.name)
+                                    "airDouble" -> current.copy(airActionButtonDouble = action.name)
+                                    else -> current.copy(penButtonPress = action.name)
+                                }
+                                penChoice = null
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.textButtonColors(
+                                contentColor = MaterialTheme.colorScheme.onBackground,
+                            ),
+                        ) {
+                            Text(
+                                action.label(),
+                                modifier = Modifier.fillMaxWidth(),
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Normal,
+                                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { penChoice = null }) { Text("Cancel") }
+            },
+        )
+    }
+
+    if (penTimingsOpen) {
+        var doubleText by remember(penTimingsOpen) {
+            mutableStateOf(current.penDoubleTapPeriodMs.toString())
+        }
+        var holdText by remember(penTimingsOpen) {
+            mutableStateOf(current.penHoldPeriodMs.toString())
+        }
+        PapercutAlertDialog(
+            onDismissRequest = { penTimingsOpen = false },
+            title = { Text("Pen action timings") },
+            text = {
+                Column {
+                    SettingsTapRow(
+                        label = "Reset",
+                        onClick = {
+                            doubleText = ViewerSettings.DEFAULT_PEN_DOUBLE_TAP_MS.toString()
+                            holdText = ViewerSettings.DEFAULT_PEN_HOLD_MS.toString()
+                        },
+                    )
+                    OutlinedTextField(
+                        value = doubleText,
+                        onValueChange = { doubleText = it.filter { ch -> ch.isDigit() }.take(4) },
+                        label = { Text("Double tap period") },
+                        suffix = { Text("ms") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = holdText,
+                        onValueChange = { holdText = it.filter { ch -> ch.isDigit() }.take(4) },
+                        label = { Text("Hold period") },
+                        suffix = { Text("ms") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        draft = current.copy(
+                            penDoubleTapPeriodMs = ViewerSettings.parsePenTimingMs(
+                                doubleText,
+                                ViewerSettings.DEFAULT_PEN_DOUBLE_TAP_MS,
+                            ),
+                            penHoldPeriodMs = ViewerSettings.parsePenTimingMs(
+                                holdText,
+                                ViewerSettings.DEFAULT_PEN_HOLD_MS,
+                            ),
+                        )
+                        penTimingsOpen = false
+                    },
+                ) { Text("OK") }
+            },
+            dismissButton = {
+                TextButton(onClick = { penTimingsOpen = false }) { Text("Cancel") }
+            },
         )
     }
 

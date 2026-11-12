@@ -1,11 +1,16 @@
 package com.grandsphere.papercut.data
 
+import androidx.room.RoomDatabase
+import androidx.room.withTransaction
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.onStart
 
-class SettingsRepository(private val dao: SettingsDao) {
+class SettingsRepository(
+    private val db: RoomDatabase,
+    private val dao: SettingsDao,
+) {
     @Volatile
     var snapshot: ViewerSettings = ViewerSettings()
         private set
@@ -23,9 +28,8 @@ class SettingsRepository(private val dao: SettingsDao) {
     suspend fun get(): ViewerSettings = dao.get() ?: ViewerSettings().also { dao.insertIgnore(it) }
 
     suspend fun update(transform: (ViewerSettings) -> ViewerSettings) {
-        val current = get()
-        val next = transform(current)
-        dao.upsert(next)
-        snapshot = next
+        snapshot = db.withTransaction {
+            transform(get()).also { dao.upsert(it) }
+        }
     }
 }
