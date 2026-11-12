@@ -836,7 +836,7 @@ class PdfStripView @JvmOverloads constructor(
         if (presenting) return false
         val penScroll = stylus && penModeEnabled
         if (folioPaging && pointerCount < 2 && !twoFingerGesture && !penScroll) return false
-        if (lockSideScroll && !(penScroll && penIgnoresScrollLock)) return false
+        if (lockSideScroll && !(penScroll && (penIgnoresScrollLock || folioPaging))) return false
         if (penScroll) return true
         if (!twoFingerPan) return true
         return pointerCount >= 2 || twoFingerGesture
